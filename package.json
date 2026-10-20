@@ -1,6 +1,6 @@
 {
   "name": "deepseek-web-api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unofficial local OpenAI-compatible API for authenticated chat.deepseek.com web sessions",
   "type": "module",
   "private": false,

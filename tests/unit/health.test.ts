@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { AppConfig } from "../../src/config/env.js";
-import { healthSnapshot } from "../../src/server/health.js";
+import { healthSnapshot, CAPABILITIES } from "../../src/server/health.js";
 
 function testConfig(dataDir: string): AppConfig {
   return {
@@ -57,5 +57,17 @@ describe("health snapshot", () => {
   it("survives an unreadable credential file instead of failing the probe", () => {
     const config = testConfig("Z:/definitely/not/a/real/path");
     expect(healthSnapshot(config, "1.2.3")).toMatchObject({ authReady: false, authAgeMs: null });
+  });
+
+  it("advertises the capability floor clients assert against", () => {
+    const snapshot = healthSnapshot(testConfig(tempDir()), "0.2.0");
+
+    expect(snapshot.capabilities).toContain("dsml-tool-calls");
+    expect(snapshot.capabilities).toContain("protocol-switches");
+    expect(snapshot.capabilities).toContain("include-usage");
+    expect(snapshot.capabilities).toContain("health-self-description");
+    // The list is shared, frozen, and must never be reordered in place of a real release.
+    expect(snapshot.capabilities).toBe(CAPABILITIES);
+    expect(Object.isFrozen(CAPABILITIES)).toBe(true);
   });
 });

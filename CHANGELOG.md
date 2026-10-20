@@ -4,7 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-20
+
 ### Added
+
+- `GET /health` now lists `capabilities`, a machine-checkable feature floor (`dsml-tool-calls`, `protocol-switches`, `truncated-retry`, `live-reasoning`, `include-usage`, `health-self-description`) that local clients assert against instead of trusting `version`.
 
 - Parse DeepSeek Web's native DSML tool-call markup, including the marker-stripped tag shapes returned by the private endpoint, into structured `tool_calls` and Responses `function_call` items.
 - `DS_TOOLS` selects the protocol wording sent to the model: `text` (default, JSON blocks) or `native` (DeepSeek markup). Both shapes are always parsed back into structured calls.
@@ -15,6 +19,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - A tool turn whose protocol text cannot be parsed now counts as an unusable response and takes the same single automatic retry as an empty turn, instead of returning raw markup as the answer.
+- Version bumped to `0.2.0` so a client can compare `GET /health` `version` against a floor; the capability list stays the primary contract because a reused process may be running an untagged build.
 
 ## [0.1.0] - 2026-07-25
 

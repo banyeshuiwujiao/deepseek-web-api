@@ -62,6 +62,7 @@ describe("HTTP server routes", () => {
         toolCalls: "text",
         authReady: false,
         authAgeMs: null,
+        capabilities: ["health-self-description", "include-usage"],
       }),
     });
     const url = await baseUrl(server);
@@ -72,6 +73,7 @@ describe("HTTP server routes", () => {
       toolCalls: "text",
       authReady: false,
       authAgeMs: null,
+      capabilities: ["health-self-description", "include-usage"],
     });
     expect((await fetch(`${url}/v1/models`)).status).toBe(401);
     const models = await fetch(`${url}/v1/models`, {

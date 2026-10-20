@@ -27,13 +27,23 @@ It answers with the running build and the switches that local clients (the DSH p
 ```json
 {
   "ok": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "toolReasoning": "clean",
   "toolCalls": "text",
   "authReady": true,
-  "authAgeMs": 123456
+  "authAgeMs": 123456,
+  "capabilities": [
+    "dsml-tool-calls",
+    "protocol-switches",
+    "truncated-retry",
+    "live-reasoning",
+    "include-usage",
+    "health-self-description"
+  ]
 }
 ```
+
+`capabilities` is a machine-checkable feature floor. Local clients (the DSH plugin) assert against it rather than trusting `version`, because a process left listening from an older build silently reintroduces fixed behavior — and releases here do not always bump the version. Adding a capability is a deliberate act: only list behavior this build guarantees unconditionally.
 
 ## Endpoints
 
