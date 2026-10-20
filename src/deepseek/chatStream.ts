@@ -4,10 +4,15 @@ import type { CompletionDiagnostics } from "./mapResponses.js";
 import type { MessageId } from "./sessionStore.js";
 import { canonicalParsedAssistantText, parseToolCalls } from "./toolCalls.js";
 import { protocolShape } from "./dsmlCalls.js";
-import { ProtocolTextGate } from "./toolStream.js";
+import { ProtocolTextGate, remainderOf } from "./toolStream.js";
+
+/** Released-prose bookkeeping lives with the gate; re-exported so callers keep one import site. */
+export { remainderOf } from "./toolStream.js";
 import { resolveToolTurn, type ToolTurnOutcome } from "./toolOutcome.js";
 import type { PublicModel } from "./types.js";
+import type { EmptyStreamEvidence } from "./streamWatch.js";
 import { iterDeepSeekUpdates } from "./updates.js";
+import { attributionFields, classifyEmptyStream, createStreamWatch } from "./streamWatch.js";
 
 export interface ChatRun {
   upstream: Response;
@@ -53,6 +58,8 @@ export interface PlainChatResult {
 export interface ToolChatResult {
   outcome: ToolTurnOutcome;
   responseMessageId: MessageId;
+  /** Why the upstream produced nothing, from stream counters; null whenever the turn produced text. */
+  emptyEvidence?: EmptyStreamEvidence | null;
   streamedReasoning: boolean;
   /** Prose already released live in this turn; the final emission must not repeat it. */
   streamedContent: string;
@@ -65,21 +72,6 @@ export interface ToolChatOptions {
   /** Opt-in (DS_STREAM_CONTENT=live): release tool-turn prose as it arrives instead of waiting for the parse. */
   streamContent?: boolean;
   emit?: (chunk: ChatStreamChunk) => void;
-}
-
-/**
- * What still has to be sent after `streamed` already reached the client.
- * `null` means the released prefix and the parse verdict disagree, so nothing may be appended.
- * The gate only releases text that is provably plain prose, so disagreement is not expected; returning
- * `null` instead of guessing keeps a hypothetical divergence from duplicating a paragraph on screen.
- */
-export function remainderOf(streamed: string, content: string): string | null {
-  if (streamed === "") return content;
-  if (content === streamed) return "";
-  if (content.startsWith(streamed)) return content.slice(streamed.length);
-  const trimmed = streamed.trimEnd();
-  if (trimmed !== "" && content.startsWith(trimmed)) return content.slice(trimmed.length);
-  return null;
 }
 
 function chatChunk(
@@ -135,7 +127,8 @@ export async function streamPlainChat(
     emit(chatChunk(run, created, withRole, null));
   };
 
-  for await (const update of iterDeepSeekUpdates(run.upstream)) {
+  const watch = createStreamWatch();
+  for await (const update of iterDeepSeekUpdates(run.upstream, watch)) {
     if (update.type === "ready") {
       responseMessageId = update.responseMessageId ?? responseMessageId;
     } else if (update.type === "tokens") {
@@ -155,6 +148,7 @@ export async function streamPlainChat(
 
   const finalText = responseText.trim() ? responseText : reasoningText;
   if (!responseText.trim() && reasoningText) writeDelta({ content: reasoningText });
+  const emptyEvidence = !reasoningText.trim() && !responseText.trim() ? classifyEmptyStream(watch) : null;
   const diagnostics: CompletionDiagnostics = {
     reasoningChars: reasoningText.length,
     outputChars: responseText.length,
@@ -163,6 +157,7 @@ export async function streamPlainChat(
     recoverableEmpty: false,
     promotedReasoning: !responseText.trim() && Boolean(reasoningText.trim()),
     protocolShape: protocolShape(responseText),
+    ...attributionFields(emptyEvidence),
   };
   emit(finalChunk(run, created, "stop", tokens, diagnostics));
   return {
@@ -204,7 +199,8 @@ export async function consumeToolChat(
     writeDelta({ content: text });
   };
 
-  for await (const update of iterDeepSeekUpdates(run.upstream)) {
+  const watch = createStreamWatch();
+  for await (const update of iterDeepSeekUpdates(run.upstream, watch)) {
     if (update.type === "ready") {
       responseMessageId = update.responseMessageId ?? responseMessageId;
     } else if (update.type === "tokens") {
@@ -221,6 +217,7 @@ export async function consumeToolChat(
   }
   if (contentGate) sendContent(contentGate.flush());
 
+  const emptyEvidence = !responseText.trim() && !reasoningGate.text.trim() ? classifyEmptyStream(watch) : null;
   return {
     outcome: resolveToolTurn(
       responseText,
@@ -228,6 +225,7 @@ export async function consumeToolChat(
       `chatcmpl_${run.sessionId}`,
       emptyFallback,
     ),
+    emptyEvidence,
     responseMessageId,
     streamedReasoning,
     streamedContent,
@@ -235,7 +233,10 @@ export async function consumeToolChat(
   };
 }
 
-export function toolDiagnostics(outcome: ToolTurnOutcome): CompletionDiagnostics {
+export function toolDiagnostics(
+  outcome: ToolTurnOutcome,
+  result?: Pick<ToolChatResult, "emptyEvidence">,
+): CompletionDiagnostics {
   return {
     reasoningChars: outcome.reasoningText.length,
     outputChars: outcome.outputText.length,
@@ -245,6 +246,7 @@ export function toolDiagnostics(outcome: ToolTurnOutcome): CompletionDiagnostics
     promotedReasoning: outcome.promotedReasoning,
     protocolShape: protocolShape(outcome.outputText),
     protocolTruncated: outcome.protocolTruncated,
+    ...attributionFields(result?.emptyEvidence),
   };
 }
 
@@ -284,6 +286,6 @@ export function emitToolChat(
     writeContent();
   }
 
-  emit(finalChunk(run, created, finishReason, result.tokens, toolDiagnostics(result.outcome)));
+  emit(finalChunk(run, created, finishReason, result.tokens, toolDiagnostics(result.outcome, result)));
   return parsed.toolCalls.length > 0 ? canonicalParsedAssistantText(parsed) : parsed.content;
 }

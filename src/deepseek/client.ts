@@ -24,6 +24,7 @@ import { buildDeepSeekPrompt, buildToolRecoveryPrompt } from "./promptBuild.js";
 import type { MessageId, SessionStore } from "./sessionStore.js";
 import { canonicalAssistantText } from "./toolCalls.js";
 import { EMPTY_TOOL_RESPONSE_TEXT } from "./toolOutcome.js";
+import { attributionFields } from "./streamWatch.js";
 import type { MessageTurn, ModelType, RequestBody } from "./types.js";
 
 interface PreparedRun extends ChatRun {
@@ -114,7 +115,7 @@ export class DeepSeekClient {
         emit,
       });
       seen.content += value.streamedContent;
-      return { value, diagnostics: toolDiagnostics(value.outcome) };
+      return { value, diagnostics: toolDiagnostics(value.outcome, value) };
     });
     const sessionText = emitToolChat(completed.run, { ...completed.value, streamedContent: seen.content }, this.config.toolReasoning, emit);
     if (!completed.diagnostics.recoverableEmpty) {
@@ -269,6 +270,7 @@ export class DeepSeekClient {
       protocolShape: diagnostics.protocolShape,
       protocolTruncated: diagnostics.protocolTruncated,
       emptyUpstream: diagnostics.emptyUpstream,
+      ...attributionFields(diagnostics.streamEvidence),
       retry: run.retry,
     };
   }

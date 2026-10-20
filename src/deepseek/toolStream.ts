@@ -97,3 +97,18 @@ export class ProtocolTextGate {
     return rest;
   }
 }
+
+/**
+ * What still has to be sent after `streamed` already reached the client.
+ * `null` means the released prefix and the parse verdict disagree, so nothing may be appended.
+ * The gate only releases text that is provably plain prose, so disagreement is not expected; returning
+ * `null` instead of guessing keeps a hypothetical divergence from duplicating a paragraph on screen.
+ */
+export function remainderOf(streamed: string, content: string): string | null {
+  if (streamed === "") return content;
+  if (content === streamed) return "";
+  if (content.startsWith(streamed)) return content.slice(streamed.length);
+  const trimmed = streamed.trimEnd();
+  if (trimmed !== "" && content.startsWith(trimmed)) return content.slice(trimmed.length);
+  return null;
+}

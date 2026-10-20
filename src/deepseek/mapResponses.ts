@@ -7,6 +7,8 @@ import { canonicalParsedAssistantText, parseToolCalls } from "./toolCalls.js";
 import { EMPTY_TOOL_RESPONSE_TEXT, resolveToolTurn } from "./toolOutcome.js";
 import type { ModelType, PublicModel } from "./types.js";
 import { iterDeepSeekUpdates } from "./updates.js";
+import { attributionFields, classifyEmptyStream, createStreamWatch, type EmptyStreamEvidence, type EmptyStreamVerdict } from "./streamWatch.js";
+export type { EmptyStreamEvidence, EmptyStreamVerdict } from "./streamWatch.js";
 export type { ResponseEmitter } from "./responseEvents.js";
 
 export interface ResponseMetadata extends Record<string, unknown> {
@@ -38,6 +40,13 @@ export interface CompletionDiagnostics {
   /** Which call markup the model actually used, and whether its payload had to be discarded. */
   protocolShape?: string;
   protocolTruncated?: boolean;
+  /**
+   * Why an empty turn was empty, decided from stream counters instead of prompt size: the upstream never
+   * opened a reply, it opened one and said nothing, or it said something our normalizer dropped.
+   * Absent on turns that produced content.
+   */
+  emptyVerdict?: EmptyStreamVerdict;
+  streamEvidence?: EmptyStreamEvidence;
 }
 export interface MappedResponseResult {
   response: OpenAIResponse;
@@ -89,7 +98,8 @@ export async function consumeResponses(input: {
   let requestMessageId: MessageId = null;
   let responseMessageId: MessageId = null;
 
-  for await (const update of iterDeepSeekUpdates(input.upstream)) {
+  const watch = createStreamWatch();
+  for await (const update of iterDeepSeekUpdates(input.upstream, watch)) {
     if (update.type === "ready") {
       requestMessageId = update.requestMessageId ?? requestMessageId;
       responseMessageId = update.responseMessageId ?? responseMessageId;
@@ -188,6 +198,8 @@ export async function consumeResponses(input: {
   };
   writer.emit("response.completed", { type: "response.completed", response: final });
   const rawForSession = hasToolCalls ? canonicalParsedAssistantText(parsed) : visibleText;
+  const isEmptyTurn = (toolOutcome?.emptyUpstream ?? (!reasoning.trim() && !outputText.trim()));
+  const emptyEvidence = isEmptyTurn ? classifyEmptyStream(watch) : null;
   return {
     response: final,
     requestMessageId,
@@ -202,6 +214,7 @@ export async function consumeResponses(input: {
       promotedReasoning: toolOutcome?.promotedReasoning ?? false,
       protocolShape: protocolShape(outputText),
       protocolTruncated: toolOutcome?.protocolTruncated ?? false,
+      ...attributionFields(emptyEvidence),
     },
   };
 }

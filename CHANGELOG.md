@@ -9,6 +9,14 @@ All notable changes to this project are documented here. The format follows [Kee
 - `DS_STREAM_CONTENT=live` releases tool-turn answer prose through the protocol gate as it arrives instead of waiting for the parse (default stays `buffered`). The gate only holds text back and never retracts it, the post-parse chunk sends only the tail the client has not seen, and a retried attempt appends nothing because its verdict replaces the first one.
 - `GET /health` reports the effective `streamContent` mode, and `live-tool-content` joins `capabilities` as the feature floor for the behavior above.
 - `POST /v1/chat/completions` streaming carries a non-standard `diagnostics` object on the final chunk (`protocolShape`, `protocolTruncated`, character counts, call count, retry flags), so local clients can log the parse verdict per turn instead of asking maintainers to decompress session logs.
+- Empty turns are now attributed instead of assumed. A stream watchdog counts what the upstream actually
+  sent (frames, whether a `ready` event arrived, whether any frame held answer-shaped text that produced no
+  channel delta) and reports a verdict in `diagnostics` and in the per-turn log line:
+  `upstream-not-started`, `upstream-silent`, or `parser-dropped-content`. This replaces the earlier reading
+  that a 250k-332k character prompt was too large for the web endpoint: the same log shows 301902 and 305013
+  character prompts completing normally minutes before and after a window where every turn came back empty,
+  including a 634 character one, so prompt size is not the classifier. `empty-stream-attribution` joins
+  `capabilities`.
 
 ## [0.2.0] - 2026-10-20
 

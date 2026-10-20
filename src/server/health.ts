@@ -28,6 +28,7 @@ export const CAPABILITIES = Object.freeze([
   "include-usage", // stream_options.include_usage attaches the upstream token counter
   "health-self-description", // this endpoint reports version, switches, and capabilities
   "live-tool-content", // DS_STREAM_CONTENT=live releases gated tool-turn prose before the parse
+  "empty-stream-attribution", // empty turns carry a verdict from stream counters, not from prompt size
 ] as const);
 
 /**
