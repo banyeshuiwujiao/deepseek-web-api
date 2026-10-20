@@ -170,7 +170,7 @@ Tool calling is explicitly prompt-based. The requested canonical model output is
 </tool_call>
 ```
 
-The parser may accept observed malformed variants at the untrusted output boundary, but generated prompts and stored canonical history must use one stable format. Tool-call IDs must be deterministic for a response seed and payload.
+The parser may accept observed malformed variants at the untrusted output boundary, including DeepSeek's native DSML markup, but generated prompts and stored canonical history must use one stable format. Tool-call IDs must be deterministic for a response seed and payload.
 
 When a tool call appears only in reasoning, promote the structured call without leaking raw tags. `DS_TOOL_REASONING=hidden` is the safe default; `clean` may expose only protocol-cleaned reasoning.
 

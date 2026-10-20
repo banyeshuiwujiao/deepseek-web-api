@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- Parse DeepSeek Web's native DSML tool-call markup, including the marker-stripped tag shapes returned by the private endpoint, into structured `tool_calls` and Responses `function_call` items.
+- `DS_TOOLS` selects the protocol wording sent to the model: `text` (default, JSON blocks) or `native` (DeepSeek markup). Both shapes are always parsed back into structured calls.
+- Live thinking for tool-compatible turns: reasoning deltas reach the client as they arrive, while the final answer and structured calls are emitted once the protocol text is resolved.
+
+### Changed
+
+- A tool turn whose protocol text cannot be parsed now counts as an unusable response and takes the same single automatic retry as an empty turn, instead of returning raw markup as the answer.
+
 ## [0.1.0] - 2026-07-25
 
 ### Added

@@ -157,6 +157,16 @@ Expected model output:
 </tool_call>
 ```
 
+DeepSeek Web also emits its own markup protocol whenever the model treats the supplied tools as native function calls. That shape is accepted and converted as well:
+
+```text
+<｜｜DSML｜｜invoke name="read">
+<｜｜DSML｜｜parameter name="path" string="true">README.md</｜｜DSML｜｜parameter>
+</｜｜DSML｜｜invoke>
+```
+
+The `｜｜DSML｜｜` marker can be partially missing in the upstream stream, so bare `<invoke name="...">` tags are read the same way. Set `DS_TOOLS=native` to ask for this shape instead of the JSON blocks.
+
 Valid calls become:
 
 - Chat Completions: `assistant.tool_calls[]`

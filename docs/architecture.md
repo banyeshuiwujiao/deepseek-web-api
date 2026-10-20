@@ -88,12 +88,12 @@ The update parser tracks the active fragment so content-only append patches rema
 DeepSeek Web does not expose native OpenAI function calling. The adapter therefore:
 
 1. Serializes current tool/function definitions and tool-choice policy into the compatibility prompt.
-2. Requires the model to emit strict `<tool_call>` JSON blocks.
-3. Accepts several observed malformed variants defensively at the output boundary.
+2. Requires the model to emit strict `<tool_call>` JSON blocks, or DeepSeek's own markup when `DS_TOOLS=native`.
+3. Accepts several observed malformed variants defensively at the output boundary, including the native DSML markup the Web model emits on its own.
 4. Converts valid calls to Chat Completions `tool_calls` or Responses `function_call` items.
 5. Stores a canonical assistant tool-call representation so a later tool result can match the correct DeepSeek session.
 
-This is a prompt compatibility layer, not a guarantee that the model will choose a tool or produce valid arguments. When tools are enabled, the adapter buffers enough upstream output to remove protocol text before emitting structured tool calls.
+This is a prompt compatibility layer, not a guarantee that the model will choose a tool or produce valid arguments. Tool-compatible streams emit reasoning as it arrives with call markup held back, then emit the cleaned answer and structured calls together; a payload that stays unparseable after the retry takes the empty-response path instead of reaching the client as markup.
 
 ## Session continuity
 

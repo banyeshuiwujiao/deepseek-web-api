@@ -241,7 +241,7 @@ Pi exposes multiple thinking levels, while DeepSeek Web exposes only `thinking_e
 
 Chat Completions returns thinking through `reasoning_content`. Responses returns a `reasoning` output item and one live reasoning delta stream.
 
-For tool-call turns, `DS_TOOL_REASONING=hidden` is recommended. It prevents raw tool protocol or private reasoning prose from appearing in Pi. `clean` emits reasoning after removing recognized tool-call protocol.
+For tool-call turns, `DS_TOOL_REASONING=hidden` is recommended. It prevents raw tool protocol or private reasoning prose from appearing in Pi. `clean` emits reasoning after removing recognized tool-call protocol, and it is the mode that streams thinking live to the client.
 
 ## Known Pi limitations
 

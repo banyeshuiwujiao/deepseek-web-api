@@ -188,9 +188,9 @@ DeepSeek Web 没有 OpenAI 原生 function calling。本项目把 tools/function
 </tool_call>
 ```
 
-解析成功后映射为标准结构。工具结果轮也会进入 session/history 匹配。
+解析成功后映射为标准结构。工具结果轮也会进入 session/history 匹配。 模型自己改用网页原生标记协议时同样会被解析，不会把原始标记当成正文返回。
 
-这仍是**提示词模拟**：不能保证模型一定调用工具、严格遵守 JSON Schema 或正确并行调用。带工具的流式请求可能在尾部集中输出结构化 call，因为服务必须先清理协议文本。
+这仍是**提示词模拟**：不能保证模型一定调用工具、严格遵守 JSON Schema 或正确并行调用。带工具的流式请求会实时下发 reasoning 思考增量；正文与结构化工具调用在协议文本解析完成后一起输出，因此集中在流尾部。
 
 ## 环境变量
 
@@ -210,7 +210,8 @@ DeepSeek Web 没有 OpenAI 原生 function calling。本项目把 tools/function
 | `DS_POW_JS` | 内置当前 worker URL | DeepSeekHashV1 worker chunk URL |
 | `DS_BASE_URL` | `https://chat.deepseek.com` | 上游地址，主要用于调试 |
 | `DS_DEBUG` | `false` | 增加调试日志和 HTTP error stack |
-| `DS_TOOL_REASONING` | `hidden` | 工具轮 reasoning：`hidden` 或 `clean` |
+| `DS_TOOL_REASONING` | `hidden` | 工具轮 reasoning：`hidden` 或 `clean`；`clean` 才实时下发思考增量 |
+| `DS_TOOLS` | `text` | 提示词要求的工具协议：`text` 为 JSON 块，`native` 为网页标记协议；两种都能解析 |
 
 可复制 `.env.example` 为 `.env`。启动时读取该文件，但不会覆盖已存在的进程环境变量。
 

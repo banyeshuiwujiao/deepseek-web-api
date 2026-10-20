@@ -135,7 +135,11 @@ Current versions promote a reasoning-only final answer to normal content when th
 
 ### Raw `<tool_call>` text leaks into content
 
-The model output was malformed or used an unknown protocol shape. Confirm tools were present in the request and keep the documented strict format. For Pi, leave `DS_TOOL_REASONING=hidden` unless cleaned tool-turn reasoning is specifically needed.
+The model output was malformed or used an unknown protocol shape. Confirm tools were present in the request and keep the documented strict format. DeepSeek's native DSML markup is parsed as well, so a leak usually means a shape that is new; record the sanitized text so the parser can cover it. A turn that stays unparseable is retried once and then reported as unusable rather than shown as an answer. For Pi, leave `DS_TOOL_REASONING=hidden` unless cleaned tool-turn reasoning is specifically needed.
+
+### Tool turns look silent until they finish
+
+With `DS_TOOL_REASONING=hidden` the adapter withholds tool-turn reasoning, so a long thinking phase shows no deltas. Set `DS_TOOL_REASONING=clean` to stream protocol-cleaned reasoning and prose while the call markup stays internal.
 
 ### The model refuses instead of calling a tool
 
