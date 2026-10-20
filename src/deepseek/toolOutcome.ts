@@ -11,6 +11,7 @@ export interface ToolTurnOutcome {
   outputText: string;
   promotedReasoning: boolean;
   recoverableEmpty: boolean;
+  protocolTruncated: boolean;
   emptyUpstream: boolean;
 }
 
@@ -33,15 +34,17 @@ export function resolveToolTurn(
     }
   }
 
-  const recoverableEmpty = parsed.toolCalls.length === 0 && !content.trim();
+  const protocolTruncated = parsed.truncated === true && parsed.toolCalls.length === 0;
+  const recoverableEmpty = parsed.toolCalls.length === 0 && (!content.trim() || protocolTruncated);
   if (recoverableEmpty && emptyFallback) content = emptyFallback;
 
   return {
-    parsed: { content, toolCalls: parsed.toolCalls },
+    parsed: { content, toolCalls: parsed.toolCalls, ...(protocolTruncated ? { truncated: true } : {}) },
     reasoningText,
     outputText,
     promotedReasoning,
     recoverableEmpty,
+    protocolTruncated,
     emptyUpstream: !outputText.trim() && !reasoningText.trim(),
   };
 }
