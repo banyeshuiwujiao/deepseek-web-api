@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   consumeToolChat,
   emitToolChat,
+  remainderOf,
   streamPlainChat,
   type ChatRun,
   type ChatStreamChunk,
@@ -173,6 +174,89 @@ describe("tool Chat stream mapping", () => {
     expect(result.outcome.recoverableEmpty).toBe(true);
     expect(result.outcome.parsed.toolCalls).toHaveLength(0);
     expect(result.outcome.parsed.content).toBe(EMPTY_TOOL_RESPONSE_TEXT);
+  });
+});
+
+describe("remainderOf", () => {
+  it("returns exactly what the client has not been shown", () => {
+    expect(remainderOf("", "full answer")).toBe("full answer");
+    expect(remainderOf("full answer", "full answer")).toBe("");
+    expect(remainderOf("Hel", "Hello")).toBe("lo");
+    expect(remainderOf("Hello\n", "Hello")).toBe("");
+  });
+
+  it("refuses to append onto a prefix the parse disagrees with", () => {
+    expect(remainderOf("Something else", "Hello")).toBeNull();
+    expect(remainderOf("Hello wor", "Hello world")).toBe("ld");
+  });
+});
+
+describe("live tool content streaming", () => {
+  it("releases prose while it arrives and repeats nothing after the parse", async () => {
+    const prose = "Sure, creating the folder now.";
+    const output = `${prose}\n${dsmlCall("pwsh", "command", "New-Item -ItemType Directory")}`;
+    const live: ChatStreamChunk[] = [];
+    const result = await consumeToolChat(
+      run(streamed([], [output.slice(0, 12), output.slice(12, 40), output.slice(40)])),
+      "",
+      { streamReasoning: false, streamContent: true, emit: (chunk) => live.push(chunk) },
+    );
+
+    expect(content(live)).toBe(prose);
+    expect(JSON.stringify(live)).not.toContain("DSML");
+    expect(result.streamedContent).toBe(prose);
+
+    const chunks: ChatStreamChunk[] = [];
+    emitToolChat(run(new Response()), result, "hidden", (chunk) => chunks.push(chunk));
+    expect(content(chunks)).toBe("");
+    expect(content(live.concat(chunks))).toBe(prose);
+    expect(toolCalls(chunks)).toEqual(["pwsh"]);
+  });
+
+  it("sends the whole prose once when the turn stays buffered", async () => {
+    const output = `Reading the log.\n${dsmlCall("pwsh", "command", "Get-Content app.log")}`;
+    const live: ChatStreamChunk[] = [];
+    const result = await consumeToolChat(
+      run(streamed([], [output.slice(0, 15), output.slice(15)])),
+      "",
+      { streamReasoning: false, streamContent: false, emit: (chunk) => live.push(chunk) },
+    );
+    const chunks: ChatStreamChunk[] = [];
+    emitToolChat(run(new Response()), result, "hidden", (chunk) => chunks.push(chunk));
+
+    expect(live).toHaveLength(0);
+    expect(result.streamedContent).toBe("");
+    expect(content(chunks)).toBe("Reading the log.");
+  });
+
+  it("appends only the tail the client has not seen", async () => {
+    const live: ChatStreamChunk[] = [];
+    const result = await consumeToolChat(
+      run(streamed([], ["Thinking. ", "Then more prose."])),
+      "",
+      { streamReasoning: false, streamContent: true, emit: (chunk) => live.push(chunk) },
+    );
+    const chunks: ChatStreamChunk[] = [];
+    emitToolChat(run(new Response()), result, "hidden", (chunk) => chunks.push(chunk));
+
+    expect(content(live)).toBe("Thinking. Then more prose.");
+    expect(result.streamedContent).toBe(content(live));
+    expect(content(chunks)).toBe("");
+    expect(chunks.at(-1)?.choices[0]?.finish_reason).toBe("stop");
+  });
+
+  it("withholds a replaced verdict instead of appending a second answer", async () => {
+    const result = await consumeToolChat(run(upstream({ output: "First attempt prose." })), "");
+    const chunks: ChatStreamChunk[] = [];
+    emitToolChat(
+      run(new Response()),
+      { ...result, streamedContent: "Something the client already saw." },
+      "hidden",
+      (chunk) => chunks.push(chunk),
+    );
+
+    expect(content(chunks)).toBe("");
+    expect(chunks.at(-1)?.choices[0]?.finish_reason).toBe("stop");
   });
 });
 

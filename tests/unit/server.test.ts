@@ -34,6 +34,7 @@ function testClient(): DeepSeekClient {
     debug: false,
     toolReasoning: "hidden",
     toolCalls: "text",
+    streamContent: "buffered",
     showBrowser: false,
   };
   const logger = createLogger(false);
@@ -60,6 +61,7 @@ describe("HTTP server routes", () => {
         version: "9.9.9",
         toolReasoning: "clean",
         toolCalls: "text",
+        streamContent: "buffered",
         authReady: false,
         authAgeMs: null,
         capabilities: ["health-self-description", "include-usage"],
@@ -71,6 +73,7 @@ describe("HTTP server routes", () => {
       version: "9.9.9",
       toolReasoning: "clean",
       toolCalls: "text",
+      streamContent: "buffered",
       authReady: false,
       authAgeMs: null,
       capabilities: ["health-self-description", "include-usage"],

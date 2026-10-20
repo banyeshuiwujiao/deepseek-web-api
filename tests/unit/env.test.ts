@@ -45,3 +45,20 @@ describe("loadConfig DS_TOOLS", () => {
     expect(() => loadConfig(temporaryCwd())).toThrow(/Invalid DS_TOOLS/);
   });
 });
+
+describe("loadConfig DS_STREAM_CONTENT", () => {
+  it("defaults to buffered so tool prose still comes from the parse", () => {
+    vi.stubEnv("DS_STREAM_CONTENT", "");
+    expect(loadConfig(temporaryCwd()).streamContent).toBe("buffered");
+  });
+
+  it("accepts live", () => {
+    vi.stubEnv("DS_STREAM_CONTENT", " live ");
+    expect(loadConfig(temporaryCwd()).streamContent).toBe("live");
+  });
+
+  it("rejects invalid values", () => {
+    vi.stubEnv("DS_STREAM_CONTENT", "progressive");
+    expect(() => loadConfig(temporaryCwd())).toThrow(/Invalid DS_STREAM_CONTENT/);
+  });
+});

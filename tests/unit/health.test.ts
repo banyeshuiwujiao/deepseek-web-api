@@ -22,6 +22,7 @@ function testConfig(dataDir: string): AppConfig {
     debug: false,
     toolReasoning: "clean",
     toolCalls: "native",
+    streamContent: "buffered",
     showBrowser: false,
   };
 }
@@ -37,6 +38,7 @@ describe("health snapshot", () => {
       version: "1.2.3",
       toolReasoning: "clean",
       toolCalls: "native",
+      streamContent: "buffered",
       authReady: false,
       authAgeMs: null,
     });

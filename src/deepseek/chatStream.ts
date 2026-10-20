@@ -54,13 +54,32 @@ export interface ToolChatResult {
   outcome: ToolTurnOutcome;
   responseMessageId: MessageId;
   streamedReasoning: boolean;
+  /** Prose already released live in this turn; the final emission must not repeat it. */
+  streamedContent: string;
   /** Accumulated completion tokens reported by the upstream for this attempt. */
   tokens: number;
 }
 
 export interface ToolChatOptions {
   streamReasoning: boolean;
+  /** Opt-in (DS_STREAM_CONTENT=live): release tool-turn prose as it arrives instead of waiting for the parse. */
+  streamContent?: boolean;
   emit?: (chunk: ChatStreamChunk) => void;
+}
+
+/**
+ * What still has to be sent after `streamed` already reached the client.
+ * `null` means the released prefix and the parse verdict disagree, so nothing may be appended.
+ * The gate only releases text that is provably plain prose, so disagreement is not expected; returning
+ * `null` instead of guessing keeps a hypothetical divergence from duplicating a paragraph on screen.
+ */
+export function remainderOf(streamed: string, content: string): string | null {
+  if (streamed === "") return content;
+  if (content === streamed) return "";
+  if (content.startsWith(streamed)) return content.slice(streamed.length);
+  const trimmed = streamed.trimEnd();
+  if (trimmed !== "" && content.startsWith(trimmed)) return content.slice(trimmed.length);
+  return null;
 }
 
 function chatChunk(
@@ -160,9 +179,12 @@ export async function consumeToolChat(
 ): Promise<ToolChatResult> {
   const created = Math.floor(Date.now() / 1000);
   const reasoningGate = new ProtocolTextGate();
+  // Only worth a gate when the client is listening: without an emit there is nothing to release into.
+  const contentGate = options.streamContent === true && options.emit ? new ProtocolTextGate() : null;
   let responseText = "";
   let responseMessageId: MessageId = null;
   let streamedReasoning = false;
+  let streamedContent = "";
   let roleSent = false;
   let tokens = 0;
   const writeDelta = (delta: Record<string, unknown>): void => {
@@ -176,6 +198,11 @@ export async function consumeToolChat(
     streamedReasoning = true;
     writeDelta({ reasoning_content: text });
   };
+  const sendContent = (text: string): void => {
+    if (!contentGate || !options.emit || !text) return;
+    streamedContent += text;
+    writeDelta({ content: text });
+  };
 
   for await (const update of iterDeepSeekUpdates(run.upstream)) {
     if (update.type === "ready") {
@@ -185,11 +212,14 @@ export async function consumeToolChat(
     } else if (update.type === "reasoning" && update.delta) {
       sendReasoning(reasoningGate.push(update.delta));
     } else if (update.type === "output" && update.delta) {
-      // Buffered on purpose: only the authoritative parse may decide what becomes visible content, so a
-      // partially arrived call marker can never reach the client as prose.
+      // The full text always accumulates because only the authoritative parse may decide what the turn
+      // looked like. In `live` mode plain prose is additionally released as it arrives; the gate holds
+      // back anything that could still turn out to be protocol markup, so nothing shown gets retracted.
       responseText += update.delta;
+      if (contentGate) sendContent(contentGate.push(update.delta));
     }
   }
+  if (contentGate) sendContent(contentGate.flush());
 
   return {
     outcome: resolveToolTurn(
@@ -200,6 +230,7 @@ export async function consumeToolChat(
     ),
     responseMessageId,
     streamedReasoning,
+    streamedContent,
     tokens,
   };
 }
@@ -233,19 +264,24 @@ export function emitToolChat(
     emit(chatChunk(run, created, withRole, null));
   };
   const finishReason = parsed.toolCalls.length > 0 ? "tool_calls" : "stop";
+  // In live mode prose may already have reached the client, so only the part the parse did not show yet goes out.
+  const writeContent = (): void => {
+    const rest = remainderOf(result.streamedContent, parsed.content);
+    if (rest) writeDelta({ content: rest });
+  };
 
   if (parsed.toolCalls.length > 0) {
     if (toolReasoning === "clean" && !result.streamedReasoning) {
       const cleanedReason = parseToolCalls(result.outcome.reasoningText).content;
       if (cleanedReason) writeDelta({ reasoning_content: cleanedReason });
     }
-    if (parsed.content) writeDelta({ content: parsed.content });
+    writeContent();
     writeDelta({ tool_calls: parsed.toolCalls.map((call, index) => ({ index, ...call })) });
   } else {
     if (!result.streamedReasoning && result.outcome.reasoningText && result.outcome.outputText.trim()) {
       writeDelta({ reasoning_content: result.outcome.reasoningText });
     }
-    if (parsed.content) writeDelta({ content: parsed.content });
+    writeContent();
   }
 
   emit(finalChunk(run, created, finishReason, result.tokens, toolDiagnostics(result.outcome)));

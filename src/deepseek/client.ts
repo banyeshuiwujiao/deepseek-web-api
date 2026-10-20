@@ -104,19 +104,19 @@ export class DeepSeekClient {
       return;
     }
 
-    const completed = await this.withToolRecovery(body, initialRun, async (run, _retry, final) => {
+    // Live prose only goes out on the first attempt: a retry replaces the whole verdict and streamed
+    // text cannot be retracted, so `seen` tracks everything the client already has to avoid repeating it.
+    const seen = { content: "" };
+    const completed = await this.withToolRecovery(body, initialRun, async (run, retry, final) => {
       const value = await consumeToolChat(run, final ? EMPTY_TOOL_RESPONSE_TEXT : "", {
         streamReasoning: this.config.toolReasoning === "clean",
+        streamContent: this.config.streamContent === "live" && retry === 0,
         emit,
       });
+      seen.content += value.streamedContent;
       return { value, diagnostics: toolDiagnostics(value.outcome) };
     });
-    const sessionText = emitToolChat(
-      completed.run,
-      completed.value,
-      this.config.toolReasoning,
-      emit,
-    );
+    const sessionText = emitToolChat(completed.run, { ...completed.value, streamedContent: seen.content }, this.config.toolReasoning, emit);
     if (!completed.diagnostics.recoverableEmpty) {
       this.remember(completed.run, completed.value.responseMessageId, sessionText);
     }

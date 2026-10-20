@@ -1,12 +1,13 @@
 /** Describes the running build so local clients can detect a stale or misconfigured backend. */
 import fs from "node:fs";
 
-import type { AppConfig, ToolCallMode, ToolReasoningMode } from "../config/env.js";
+import type { AppConfig, StreamContentMode, ToolCallMode, ToolReasoningMode } from "../config/env.js";
 
 export interface HealthSnapshot {
   version: string;
   toolReasoning: ToolReasoningMode;
   toolCalls: ToolCallMode;
+  streamContent: StreamContentMode;
   authReady: boolean;
   /** Age of the stored credential snapshot, or null when no login has been persisted yet. */
   authAgeMs: number | null;
@@ -26,6 +27,7 @@ export const CAPABILITIES = Object.freeze([
   "live-reasoning", // tool turns stream thinking deltas instead of buffering the whole turn
   "include-usage", // stream_options.include_usage attaches the upstream token counter
   "health-self-description", // this endpoint reports version, switches, and capabilities
+  "live-tool-content", // DS_STREAM_CONTENT=live releases gated tool-turn prose before the parse
 ] as const);
 
 /**
@@ -43,6 +45,7 @@ export function healthSnapshot(config: AppConfig, version: string, now = Date.no
     version,
     toolReasoning: config.toolReasoning,
     toolCalls: config.toolCalls,
+    streamContent: config.streamContent,
     authReady: auth !== null,
     authAgeMs: auth ? Math.max(0, Math.round(now - auth.mtimeMs)) : null,
     capabilities: CAPABILITIES,

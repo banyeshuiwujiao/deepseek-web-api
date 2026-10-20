@@ -11,6 +11,8 @@ import {
 export type ToolReasoningMode = "hidden" | "clean";
 /** Which text protocol the model is asked to use; both are parsed back into structured calls. */
 export type ToolCallMode = "text" | "native";
+/** Whether tool-turn prose streams live or waits for the authoritative parse. */
+export type StreamContentMode = "buffered" | "live";
 
 export interface AppConfig {
   port: number;
@@ -27,6 +29,7 @@ export interface AppConfig {
   debug: boolean;
   toolReasoning: ToolReasoningMode;
   toolCalls: ToolCallMode;
+  streamContent: StreamContentMode;
   /** Show Chrome UI. Default false (headless). Login always opens a visible window when needed. */
   showBrowser: boolean;
 }
@@ -73,6 +76,15 @@ function parseToolCalls(raw: string | undefined): ToolCallMode {
   return value;
 }
 
+/** `live` releases tool-turn prose through the protocol gate as it arrives; `buffered` (default) waits for the parse. */
+function parseStreamContent(raw: string | undefined): StreamContentMode {
+  const value = raw?.trim() || "buffered";
+  if (value !== "buffered" && value !== "live") {
+    throw new Error(`Invalid DS_STREAM_CONTENT: ${value}; expected buffered or live`);
+  }
+  return value;
+}
+
 function parsePort(raw: string | undefined): number {
   const port = Number(raw || 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
@@ -101,6 +113,7 @@ export function loadConfig(cwd = process.cwd()): AppConfig {
     debug: /^(1|true|yes|on)$/i.test(process.env.DS_DEBUG || ""),
     toolReasoning: parseToolReasoning(process.env.DS_TOOL_REASONING),
     toolCalls: parseToolCalls(process.env.DS_TOOLS),
+    streamContent: parseStreamContent(process.env.DS_STREAM_CONTENT),
     showBrowser: /^(1|true|yes|on)$/i.test(process.env.DS_SHOW_BROWSER || ""),
   };
 }
