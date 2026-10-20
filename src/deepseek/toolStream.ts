@@ -5,8 +5,14 @@ const TAG_START_SOURCE =
   "<\\s*/?\\s*(?:\\uFF5C{1,2}\\s*DSML\\s*\\uFF5C{1,2}\\s*)?\\s*(?:tool[_-]?call|_?call|calls|invoke|parameter)\\b";
 /** A one or two letter tag alone at the end of the stream, which is what a stripped wrapper becomes. */
 const STRAY_TAG = /<\/?[a-z][a-z0-9_-]{0,1}>\s*$/i;
-const TOOL_JSON_KEY = /^\{\s*"(?:name|arguments)"\s*:/;
-const TOOL_JSON_PARTIAL = /^\{\s*("(?:n|na|nam|name|a|ar|arg|argu|argum|argume|argumen|arguments)?|)?$/;
+/**
+ * Must stay at least as broad as `TOOL_FIRST_KEY` in toolCallJson.ts: the parser also treats a
+ * line-initial `{"function":{...}}` as a bare call candidate, so releasing one would show the client
+ * text that the authoritative parse then consumes.
+ */
+const TOOL_JSON_KEY = /^\{\s*"(?:name|arguments|function)"\s*:/;
+/** Any `{` plus an unfinished lowercase key, with or without its closing quote, still has to be held back. */
+const TOOL_JSON_PARTIAL = /^\{\s*(?:"[a-z_]*"?)?$/;
 const MAX_PENDING = 4_096;
 
 function firstTagIndex(text: string): number {

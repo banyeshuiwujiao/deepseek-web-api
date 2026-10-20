@@ -32,18 +32,38 @@ describe("protocolStartIndex", () => {
       expect(protocolStartIndex(text)).toBe(-1);
     }
   });
+
+  it("recognizes a line-initial object the bare protocol accepts as a call", () => {
+    for (const text of ['{"function":{"name":"read"}}', '{"name":"read","arguments":{}}']) {
+      expect(protocolStartIndex(text)).toBe(0);
+    }
+  });
 });
 
 describe("pendingProtocolLength", () => {
   it("holds an unfinished marker and releases a finished one", () => {
     expect(pendingProtocolLength("hello <t")).toBe(2);
     expect(pendingProtocolLength("hello <div>x</div>")).toBe(0);
-    expect(pendingProtocolLength('hello {"nam')).toBe(5);
     expect(pendingProtocolLength('done {"mode":"fast"}')).toBe(0);
+  });
+
+  it("holds every key boundary the parser could complete into a call", () => {
+    for (const tail of ['{', '{"', '{"n', '{"name', '{"name"', '{"function"', '{"argum']) {
+      expect(pendingProtocolLength(`ok ${tail}`)).toBe(tail.length);
+    }
   });
 });
 
 describe("ProtocolTextGate", () => {
+  it("never releases a bare call object that arrives split at the key boundary", () => {
+    const call = '{"function":{"name":"read","arguments":{"path":"src/index.ts"}}}';
+    const { emitted, gate } = stream(["Looking it up.\n", call.slice(0, 7), call.slice(7)]);
+
+    expect(emitted.join("").trimEnd()).toBe("Looking it up.");
+    expect(emitted.join("")).not.toContain("function");
+    expect(gate.text).toBe(`Looking it up.\n${call}`);
+  });
+
   it("streams prose delta by delta and never releases protocol text", () => {
     const parts = ["Let me ", "check. ", JSON_OPEN, '\n{"name":"read","arguments":{}}\n', JSON_CLOSE];
     const { emitted, gate } = stream(parts);
