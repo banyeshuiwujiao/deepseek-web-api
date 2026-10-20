@@ -56,6 +56,28 @@ describe("consumeResponses", () => {
     expect(events.filter(({ event }) => event === "response.output_text.delta")).toEqual([]);
   });
 
+  it("maps DeepSeek DSML markup to a function_call without leaking tags", async () => {
+    const bar = String.fromCharCode(0xff5c);
+    const mark = `${bar}${bar}DSML${bar}${bar}`;
+    const markup = [
+      `Let me read it.\n<${mark} invoke name="read">`,
+      `<${mark} parameter name="path" string="true">README.md</${mark} parameter>`,
+      `</${mark} invoke>`,
+    ].join("\n");
+    const events: EventRecord[] = [];
+    const result = await consumeResponses({
+      ...baseInput(upstream({ reasoning: "Thinking first.", output: markup })),
+      toolReasoning: "clean",
+      emit: (event, data) => events.push({ event, data }),
+    });
+
+    expect(result.response.output.map((item) => item.type)).toEqual(["reasoning", "message", "function_call"]);
+    expect(result.response.output.at(-1)).toMatchObject({ name: "read", arguments: '{"path":"README.md"}' });
+    expect(result.response.output_text).toBe("Let me read it.");
+    expect(JSON.stringify(events)).not.toContain("DSML");
+    expect(events.filter(({ event }) => event === "response.reasoning_text.delta")).toHaveLength(1);
+  });
+
   it("maps a repaired truncated tool payload to a Responses function_call", async () => {
     const truncated = '<_call>\n{"name":"read","arguments":{"path":"package.json"}\n</tool_call>';
     const result = await consumeResponses(baseInput(upstream({ output: truncated })));

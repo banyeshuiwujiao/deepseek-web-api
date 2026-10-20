@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 
 import { isRecord } from "../utils/json.js";
+import { parseDsmlCalls, stripDsmlTags } from "./dsmlCalls.js";
 import { collectJsonObjects, looksLikeToolJson } from "./toolCallJson.js";
 
 export interface OpenAIToolCall {
@@ -13,6 +14,8 @@ export interface OpenAIToolCall {
 export interface ParsedToolCalls {
   content: string;
   toolCalls: OpenAIToolCall[];
+  /** Set when protocol markup was present but its payload was too damaged to trust. */
+  truncated?: boolean;
 }
 
 interface Range {
@@ -144,7 +147,7 @@ function removeRanges(text: string, ranges: readonly Range[]): string {
 
 function withoutToolTags(text: string): string {
   TOOL_TAG.lastIndex = 0;
-  return text.replace(TOOL_TAG, "");
+  return stripDsmlTags(text.replace(TOOL_TAG, ""));
 }
 
 function protocolOnly(text: string, ranges: readonly Range[]): boolean {
@@ -194,15 +197,17 @@ function taggedCandidates(text: string, blocks: readonly TagBlock[]): {
 
 /** Parse model tool-call text into OpenAI-compatible calls and cleaned content. */
 export function parseToolCalls(text: string, seed = "tool"): ParsedToolCalls {
-  const blocks = tagBlocks(text);
-  const tagged = taggedCandidates(text, blocks);
-  const bareObjects = collectJsonObjects(text).filter(
+  const dsml = parseDsmlCalls(text);
+  const source = dsml.content;
+  const blocks = tagBlocks(source);
+  const tagged = taggedCandidates(source, blocks);
+  const bareObjects = collectJsonObjects(source).filter(
     (object) => !overlaps({ start: object.start, end: object.end }, blocks),
   );
   const bareRanges = bareObjects
     .filter((object) => looksLikeToolJson(object.raw))
     .map((object) => ({ start: object.start, end: object.end }));
-  const bareContext = protocolOnly(text, [...blocks, ...bareRanges]);
+  const bareContext = protocolOnly(source, [...blocks, ...bareRanges]);
   const bareCalls: PayloadCandidate[] = bareContext
     ? bareObjects.flatMap((object) => {
         const payload = callPayload(object.value);
@@ -211,17 +216,23 @@ export function parseToolCalls(text: string, seed = "tool"): ParsedToolCalls {
           : [];
       })
     : [];
-  const candidates = [...tagged.calls, ...bareCalls].sort((left, right) => left.order - right.order);
+  const dsmlCandidates: PayloadCandidate[] = dsml.calls.map((call) => ({
+    order: call.order,
+    consume: { start: 0, end: 0 },
+    payload: { name: call.name, arguments: call.arguments },
+  }));
+  const candidates = [...tagged.calls, ...bareCalls, ...dsmlCandidates].sort((left, right) => left.order - right.order);
   const toolCalls: OpenAIToolCall[] = [];
   const seen = new Set<string>();
   for (const candidate of candidates) pushUnique(toolCalls, seed, candidate.payload, seen);
 
   const artifactRanges = [...tagged.artifacts, ...bareRanges];
-  const isProtocolOnly = artifactRanges.length > 0 && protocolOnly(text, [...blocks, ...bareRanges]);
-  if (toolCalls.length === 0 && !isProtocolOnly) return { content: text, toolCalls };
+  const isProtocolOnly = artifactRanges.length > 0 && protocolOnly(source, [...blocks, ...bareRanges]);
+  const damaged = dsml.truncated ? { truncated: true } : {};
+  if (toolCalls.length === 0 && !isProtocolOnly && !dsml.hadProtocol) return { content: text, toolCalls };
   const consumed = candidates.map((candidate) => candidate.consume);
   const cleaned = withoutToolTags(
-    removeRanges(text, [
+    removeRanges(source, [
       ...consumed,
       ...(toolCalls.length > 0 ? blocks : []),
       ...(bareContext || isProtocolOnly ? artifactRanges : []),
@@ -229,7 +240,7 @@ export function parseToolCalls(text: string, seed = "tool"): ParsedToolCalls {
   )
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return { content: cleaned, toolCalls };
+  return { content: cleaned, toolCalls, ...damaged };
 }
 
 /** Prefer valid output calls, then promote calls leaked into reasoning. */
@@ -243,6 +254,9 @@ export function parseToolCallsFromParts(
   const fromReasoning = parseToolCalls(reasoningText, seed);
   if (fromReasoning.toolCalls.length > 0) {
     return { content: fromOutput.content, toolCalls: fromReasoning.toolCalls };
+  }
+  if (fromReasoning.truncated && !fromOutput.content.trim()) {
+    return { content: fromOutput.content, toolCalls: [], truncated: true };
   }
   return outputText.trim() ? fromOutput : fromReasoning;
 }
