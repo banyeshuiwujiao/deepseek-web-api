@@ -206,6 +206,47 @@ describe("chat stream usage reporting", () => {
     expect(chunks.at(-1)?.usage?.total_tokens).toBe(42);
   });
 
+  it("rides the parse verdict on the final chunk so clients can log one line", async () => {
+    const chunks: ChatStreamChunk[] = [];
+    await streamPlainChat(run(upstream({ output: "普通回答。" })), (chunk) => chunks.push(chunk));
+
+    expect(chunks.at(-1)?.diagnostics).toMatchObject({
+      outputChars: "普通回答。".length,
+      toolCallCount: 0,
+      protocolShape: "none",
+    });
+  });
+
+  it("names the protocol shape of a tool turn that produced markup", async () => {
+    const output = ["Creating it now.", dsmlCall("pwsh", "command", "Get-Location")].join("\n");
+    const result = await consumeToolChat(run(upstream({ output })), "");
+    const chunks: ChatStreamChunk[] = [];
+    emitToolChat(run(new Response()), result, "hidden", (chunk) => chunks.push(chunk));
+
+    expect(chunks.at(-1)?.diagnostics).toMatchObject({
+      protocolShape: "dsml",
+      toolCallCount: 1,
+      protocolTruncated: false,
+    });
+  });
+
+  it("marks a truncated payload in the diagnostics rather than hiding it", async () => {
+    const truncated = [
+      `Writing the page now.\n<${MARK} invoke name="write">`,
+      `<${MARK} parameter name="content" string="true"><!DOCTYPE html>\n<html>`,
+    ].join("\n");
+    const result = await consumeToolChat(run(upstream({ output: truncated })), EMPTY_TOOL_RESPONSE_TEXT);
+    const chunks: ChatStreamChunk[] = [];
+    emitToolChat(run(new Response()), result, "hidden", (chunk) => chunks.push(chunk));
+
+    expect(chunks.at(-1)?.diagnostics).toMatchObject({
+      protocolShape: "dsml",
+      protocolTruncated: true,
+      toolCallCount: 0,
+      recoverableEmpty: true,
+    });
+  });
+
   it("reports zero tokens when the upstream never sends a counter", async () => {
     const chunks: ChatStreamChunk[] = [];
     await streamPlainChat(metered(upstream({ output: "Hello." })), (chunk) => chunks.push(chunk));

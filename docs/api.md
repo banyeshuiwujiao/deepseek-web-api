@@ -167,6 +167,8 @@ Text chunks use:
 
 Reasoning chunks use `delta.reasoning_content`. Tool calls use `delta.tool_calls`, and the final chunk sets `finish_reason` to `tool_calls` or `stop`.
 
+The final chunk also carries a non-standard `diagnostics` object describing what the authoritative parser concluded: `protocolShape` (`dsml` / `json` / `none`), `protocolTruncated`, `reasoningChars`, `outputChars`, `toolCallCount`, and the empty/retry flags. It exists so a local client can log one line per turn and answer "why did this turn not call anything" without decompressing a session log.
+
 With `stream_options: { "include_usage": true }` the final chunk also carries `usage`, whose `completion_tokens` and `total_tokens` are the upstream accumulated output counter and whose `prompt_tokens` stays `0` because the web endpoint never reports input tokens. Without that opt-in no streaming chunk carries `usage`, so configure clients such as Pi with `supportsUsageInStreaming: false` when they cannot request it.
 
 ## Tool-call mapping

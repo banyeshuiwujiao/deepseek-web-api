@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- `POST /v1/chat/completions` streaming carries a non-standard `diagnostics` object on the final chunk (`protocolShape`, `protocolTruncated`, character counts, call count, retry flags), so local clients can log the parse verdict per turn instead of asking maintainers to decompress session logs.
+
 ## [0.2.0] - 2026-10-20
 
 ### Added

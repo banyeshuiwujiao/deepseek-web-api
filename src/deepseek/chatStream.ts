@@ -36,6 +36,12 @@ export interface ChatStreamChunk {
   conversation?: string;
   previous_response_id?: string;
   usage?: ChatUsage;
+  /**
+   * What the authoritative parser concluded about this turn, on the final chunk. Local clients log it so a
+   * protocol problem is one line to read instead of a decompressed session dump; `protocolShape` is the field
+   * that answers "why did this turn not call anything".
+   */
+  diagnostics?: CompletionDiagnostics;
 }
 
 export interface PlainChatResult {
@@ -82,12 +88,14 @@ function finalChunk(
   created: number,
   finishReason: "stop" | "tool_calls",
   tokens: number,
+  diagnostics?: CompletionDiagnostics,
 ): ChatStreamChunk {
   return {
     ...chatChunk(run, created, {}, finishReason),
     conversation: run.sessionId,
     previous_response_id: `resp_${run.sessionId}`,
     ...(run.includeUsage === true ? { usage: completionUsage(tokens) } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
   };
 }
 
@@ -128,18 +136,20 @@ export async function streamPlainChat(
 
   const finalText = responseText.trim() ? responseText : reasoningText;
   if (!responseText.trim() && reasoningText) writeDelta({ content: reasoningText });
-  emit(finalChunk(run, created, "stop", tokens));
+  const diagnostics: CompletionDiagnostics = {
+    reasoningChars: reasoningText.length,
+    outputChars: responseText.length,
+    toolCallCount: 0,
+    emptyUpstream: !reasoningText.trim() && !responseText.trim(),
+    recoverableEmpty: false,
+    promotedReasoning: !responseText.trim() && Boolean(reasoningText.trim()),
+    protocolShape: protocolShape(responseText),
+  };
+  emit(finalChunk(run, created, "stop", tokens, diagnostics));
   return {
     responseMessageId,
     finalText,
-    diagnostics: {
-      reasoningChars: reasoningText.length,
-      outputChars: responseText.length,
-      toolCallCount: 0,
-      emptyUpstream: !reasoningText.trim() && !responseText.trim(),
-      recoverableEmpty: false,
-      promotedReasoning: !responseText.trim() && Boolean(reasoningText.trim()),
-    },
+    diagnostics,
   };
 }
 
@@ -238,6 +248,6 @@ export function emitToolChat(
     if (parsed.content) writeDelta({ content: parsed.content });
   }
 
-  emit(finalChunk(run, created, finishReason, result.tokens));
+  emit(finalChunk(run, created, finishReason, result.tokens, toolDiagnostics(result.outcome)));
   return parsed.toolCalls.length > 0 ? canonicalParsedAssistantText(parsed) : parsed.content;
 }
