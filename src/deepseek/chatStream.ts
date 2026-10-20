@@ -13,6 +13,14 @@ export interface ChatRun {
   upstream: Response;
   sessionId: string;
   publicModel: PublicModel;
+  /** Set when the request asked for stream_options.include_usage; absent keeps chunks usage-free. */
+  includeUsage?: boolean;
+}
+
+export interface ChatUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
 }
 
 export interface ChatStreamChunk {
@@ -27,6 +35,7 @@ export interface ChatStreamChunk {
   }>;
   conversation?: string;
   previous_response_id?: string;
+  usage?: ChatUsage;
 }
 
 export interface PlainChatResult {
@@ -39,6 +48,8 @@ export interface ToolChatResult {
   outcome: ToolTurnOutcome;
   responseMessageId: MessageId;
   streamedReasoning: boolean;
+  /** Accumulated completion tokens reported by the upstream for this attempt. */
+  tokens: number;
 }
 
 export interface ToolChatOptions {
@@ -61,15 +72,22 @@ function chatChunk(
   };
 }
 
+/** The web upstream reports one accumulated completion counter, so prompt tokens stay unknown. */
+function completionUsage(tokens: number): ChatUsage {
+  return { prompt_tokens: 0, completion_tokens: tokens, total_tokens: tokens };
+}
+
 function finalChunk(
   run: ChatRun,
   created: number,
   finishReason: "stop" | "tool_calls",
+  tokens: number,
 ): ChatStreamChunk {
   return {
     ...chatChunk(run, created, {}, finishReason),
     conversation: run.sessionId,
     previous_response_id: `resp_${run.sessionId}`,
+    ...(run.includeUsage === true ? { usage: completionUsage(tokens) } : {}),
   };
 }
 
@@ -83,6 +101,7 @@ export async function streamPlainChat(
   let responseMessageId: MessageId = null;
   let roleSent = false;
   let reasoningSent = false;
+  let tokens = 0;
   const writeDelta = (delta: Record<string, unknown>): void => {
     const withRole = roleSent ? delta : { role: "assistant", ...delta };
     roleSent = true;
@@ -92,6 +111,8 @@ export async function streamPlainChat(
   for await (const update of iterDeepSeekUpdates(run.upstream)) {
     if (update.type === "ready") {
       responseMessageId = update.responseMessageId ?? responseMessageId;
+    } else if (update.type === "tokens") {
+      tokens = update.value;
     } else if (update.type === "reasoning" && update.delta) {
       reasoningText += update.delta;
       if (responseText && reasoningSent) writeDelta({ reasoning_content: update.delta });
@@ -107,7 +128,7 @@ export async function streamPlainChat(
 
   const finalText = responseText.trim() ? responseText : reasoningText;
   if (!responseText.trim() && reasoningText) writeDelta({ content: reasoningText });
-  emit(finalChunk(run, created, "stop"));
+  emit(finalChunk(run, created, "stop", tokens));
   return {
     responseMessageId,
     finalText,
@@ -133,6 +154,7 @@ export async function consumeToolChat(
   let responseMessageId: MessageId = null;
   let streamedReasoning = false;
   let roleSent = false;
+  let tokens = 0;
   const writeDelta = (delta: Record<string, unknown>): void => {
     if (!options.emit) return;
     const withRole = roleSent ? delta : { role: "assistant", ...delta };
@@ -148,6 +170,8 @@ export async function consumeToolChat(
   for await (const update of iterDeepSeekUpdates(run.upstream)) {
     if (update.type === "ready") {
       responseMessageId = update.responseMessageId ?? responseMessageId;
+    } else if (update.type === "tokens") {
+      tokens = update.value;
     } else if (update.type === "reasoning" && update.delta) {
       sendReasoning(reasoningGate.push(update.delta));
     } else if (update.type === "output" && update.delta) {
@@ -166,6 +190,7 @@ export async function consumeToolChat(
     ),
     responseMessageId,
     streamedReasoning,
+    tokens,
   };
 }
 
@@ -213,6 +238,6 @@ export function emitToolChat(
     if (parsed.content) writeDelta({ content: parsed.content });
   }
 
-  emit(finalChunk(run, created, finishReason));
+  emit(finalChunk(run, created, finishReason, result.tokens));
   return parsed.toolCalls.length > 0 ? canonicalParsedAssistantText(parsed) : parsed.content;
 }

@@ -1,7 +1,7 @@
 /** Verifies the documented behavior of the corresponding production module. */
 import { describe, expect, it } from "vitest";
 
-import { resolveModel, resolveSearch, resolveThinking } from "../../src/deepseek/models.js";
+import { resolveIncludeUsage, resolveModel, resolveSearch, resolveThinking } from "../../src/deepseek/models.js";
 
  describe("model resolution", () => {
   it.each([
@@ -24,5 +24,12 @@ import { resolveModel, resolveSearch, resolveThinking } from "../../src/deepseek
   it("forces search off for expert", () => {
     expect(resolveSearch({ search_enabled: true }, "expert")).toBe(false);
     expect(resolveSearch({ tools: [{ type: "web_search" }] }, "default")).toBe(true);
+  });
+
+  it("reads usage reporting only from the stream_options opt-in", () => {
+    expect(resolveIncludeUsage({ stream_options: { include_usage: true } })).toBe(true);
+    expect(resolveIncludeUsage({ stream_options: { include_usage: false } })).toBe(false);
+    expect(resolveIncludeUsage({ stream_options: "include_usage" })).toBe(false);
+    expect(resolveIncludeUsage({})).toBe(false);
   });
 });

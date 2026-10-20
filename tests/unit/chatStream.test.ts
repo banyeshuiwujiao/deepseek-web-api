@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   consumeToolChat,
   emitToolChat,
+  streamPlainChat,
   type ChatRun,
   type ChatStreamChunk,
 } from "../../src/deepseek/chatStream.js";
@@ -20,12 +21,17 @@ function fragmentEvent(fragments: unknown[]): string {
   return `data: {"p":"response/fragments","o":"APPEND","v":${JSON.stringify(fragments)}}\n\n`;
 }
 
-function upstream(parts: { reasoning?: string; output?: string }): Response {
+function tokenEvent(tokens: number): string {
+  return `data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":${tokens}}]}\n\n`;
+}
+
+function upstream(parts: { reasoning?: string; output?: string }, tokens?: number): Response {
   const fragments = [
     ...(parts.reasoning ? [{ type: "THINK", content: parts.reasoning }] : []),
     ...(parts.output ? [{ type: "RESPONSE", content: parts.output }] : []),
   ];
-  return new Response(`event: ready\ndata: {"response_message_id":7}\n\n` + fragmentEvent(fragments));
+  const usage = tokens === undefined ? "" : tokenEvent(tokens);
+  return new Response(`event: ready\ndata: {"response_message_id":7}\n\n` + fragmentEvent(fragments) + usage);
 }
 
 function streamed(reasoningParts: string[], outputParts: string[]): Response {
@@ -42,6 +48,10 @@ function streamed(reasoningParts: string[], outputParts: string[]): Response {
 
 function run(stream: Response): ChatRun {
   return { upstream: stream, publicModel: "deepseek-v4-pro", sessionId: "session-1" };
+}
+
+function metered(stream: Response): ChatRun {
+  return { ...run(stream), includeUsage: true };
 }
 
 function content(chunks: ChatStreamChunk[]): string {
@@ -163,5 +173,43 @@ describe("tool Chat stream mapping", () => {
     expect(result.outcome.recoverableEmpty).toBe(true);
     expect(result.outcome.parsed.toolCalls).toHaveLength(0);
     expect(result.outcome.parsed.content).toBe(EMPTY_TOOL_RESPONSE_TEXT);
+  });
+});
+
+describe("chat stream usage reporting", () => {
+  it("reports the accumulated completion counter when include_usage is requested", async () => {
+    const result = await consumeToolChat(metered(upstream({ output: "Reading the file." }, 1234)), "");
+    const chunks: ChatStreamChunk[] = [];
+    emitToolChat(metered(new Response()), result, "hidden", (chunk) => chunks.push(chunk));
+
+    expect(result.tokens).toBe(1234);
+    expect(chunks.at(-1)?.usage).toEqual({
+      prompt_tokens: 0,
+      completion_tokens: 1234,
+      total_tokens: 1234,
+    });
+  });
+
+  it("keeps every chunk usage-free without the opt-in", async () => {
+    const result = await consumeToolChat(run(upstream({ output: "Reading." }, 900)), "");
+    const chunks: ChatStreamChunk[] = [];
+    emitToolChat(run(new Response()), result, "hidden", (chunk) => chunks.push(chunk));
+
+    expect(result.tokens).toBe(900);
+    expect(JSON.stringify(chunks)).not.toContain("usage");
+  });
+
+  it("reports usage on the plain chat path as well", async () => {
+    const chunks: ChatStreamChunk[] = [];
+    await streamPlainChat(metered(upstream({ output: "Hello." }, 42)), (chunk) => chunks.push(chunk));
+
+    expect(chunks.at(-1)?.usage?.total_tokens).toBe(42);
+  });
+
+  it("reports zero tokens when the upstream never sends a counter", async () => {
+    const chunks: ChatStreamChunk[] = [];
+    await streamPlainChat(metered(upstream({ output: "Hello." })), (chunk) => chunks.push(chunk));
+
+    expect(chunks.at(-1)?.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
   });
 });

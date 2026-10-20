@@ -111,6 +111,7 @@ See [responses-api.md](responses-api.md) for the event sequence and function-cal
 | `model` | Same model resolver as Responses. |
 | `messages` | `system`, `developer`, `user`, `assistant`, `tool`, and `function` text history. |
 | `stream` | `true` returns `chat.completion.chunk` SSE frames followed by `[DONE]`. |
+| `stream_options.include_usage` | `true` attaches `usage` to the final streaming chunk; usage is omitted otherwise. |
 | `tools` / `functions` | Prompt-based tool compatibility. |
 | `tool_choice` / `function_call` | Included in the compatibility prompt. |
 | reasoning/thinking compatibility fields | Mapped to the upstream boolean thinking switch. |
@@ -143,7 +144,7 @@ Text chunks use:
 
 Reasoning chunks use `delta.reasoning_content`. Tool calls use `delta.tool_calls`, and the final chunk sets `finish_reason` to `tool_calls` or `stop`.
 
-The server does not emit a separate usage-only streaming chunk. Configure clients such as Pi with `supportsUsageInStreaming: false` when available.
+With `stream_options: { "include_usage": true }` the final chunk also carries `usage`, whose `completion_tokens` and `total_tokens` are the upstream accumulated output counter and whose `prompt_tokens` stays `0` because the web endpoint never reports input tokens. Without that opt-in no streaming chunk carries `usage`, so configure clients such as Pi with `supportsUsageInStreaming: false` when they cannot request it.
 
 ## Tool-call mapping
 

@@ -18,7 +18,7 @@ import {
   type MappedResponseResult,
   type ResponseEmitter,
 } from "./mapResponses.js";
-import { resolveModel, resolveSearch, resolveThinking } from "./models.js";
+import { resolveIncludeUsage, resolveModel, resolveSearch, resolveThinking } from "./models.js";
 import { prepareCompletion } from "./pow.js";
 import { buildDeepSeekPrompt, buildToolRecoveryPrompt } from "./promptBuild.js";
 import type { MessageId, SessionStore } from "./sessionStore.js";
@@ -214,6 +214,7 @@ export class DeepSeekClient {
       parentMessageId,
       modelType,
       publicModel,
+      includeUsage: resolveIncludeUsage(body),
       thinking,
       search,
       reusedSession,

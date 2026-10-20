@@ -18,6 +18,7 @@ export interface RequestBody extends Record<string, unknown> {
   input?: unknown;
   messages?: unknown;
   stream?: unknown;
+  stream_options?: unknown;
 }
 
 export interface DeepSeekAuth {

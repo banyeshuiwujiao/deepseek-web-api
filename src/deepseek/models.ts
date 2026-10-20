@@ -35,6 +35,12 @@ export function resolveThinking(body: RequestBody): boolean {
   return !["none", "off", "0", "false", "disabled"].includes(String(effort).toLowerCase());
 }
 
+/** Honor the OpenAI stream_options opt-in; usage stays absent unless a client asks for it. */
+export function resolveIncludeUsage(body: RequestBody): boolean {
+  const options = isRecord(body.stream_options) ? body.stream_options : undefined;
+  return options?.include_usage === true;
+}
+
 /** Expert mode cannot search on the Web client, so the trusted server forces it off. */
 export function resolveSearch(body: RequestBody, modelType: ModelType): boolean {
   if (modelType === "expert") return false;
