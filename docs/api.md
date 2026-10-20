@@ -30,6 +30,7 @@ It answers with the running build and the switches that local clients (the DSH p
   "version": "0.2.0",
   "toolReasoning": "clean",
   "toolCalls": "text",
+  "streamContent": "buffered",
   "authReady": true,
   "authAgeMs": 123456,
   "capabilities": [
@@ -38,12 +39,15 @@ It answers with the running build and the switches that local clients (the DSH p
     "truncated-retry",
     "live-reasoning",
     "include-usage",
-    "health-self-description"
+    "health-self-description",
+    "live-tool-content"
   ]
 }
 ```
 
 `capabilities` is a machine-checkable feature floor. Local clients (the DSH plugin) assert against it rather than trusting `version`, because a process left listening from an older build silently reintroduces fixed behavior — and releases here do not always bump the version. Adding a capability is a deliberate act: only list behavior this build guarantees unconditionally.
+
+`streamContent` reports the effective answer-streaming mode, and unlike the capabilities above it is a setting rather than a guarantee: `live-tool-content` says this build *can* release tool-turn prose early once `DS_STREAM_CONTENT=live` is set.
 
 ## Endpoints
 
@@ -166,6 +170,8 @@ Text chunks use:
 ```
 
 Reasoning chunks use `delta.reasoning_content`. Tool calls use `delta.tool_calls`, and the final chunk sets `finish_reason` to `tool_calls` or `stop`.
+
+Tool-turn answer text is buffered by default: `delta.content` for a turn that calls a tool arrives once, after the protocol text has been parsed (`DS_STREAM_CONTENT=buffered`). `DS_STREAM_CONTENT=live` instead releases prose through the same gate that guards reasoning, so the answer types out while the model is still writing. The gate only ever holds text back and never retracts what it released, so markup cannot appear, and the post-parse emission sends only the tail the client has not seen yet. Live mode applies to the first attempt of a turn: if that attempt is judged unusable and retried, the retry's verdict replaces it and nothing is appended, because SSE text already on screen cannot be taken back.
 
 The final chunk also carries a non-standard `diagnostics` object describing what the authoritative parser concluded: `protocolShape` (`dsml` / `json` / `none`), `protocolTruncated`, `reasoningChars`, `outputChars`, `toolCallCount`, and the empty/retry flags. It exists so a local client can log one line per turn and answer "why did this turn not call anything" without decompressing a session log.
 

@@ -141,6 +141,8 @@ The model output was malformed or used an unknown protocol shape. Confirm tools 
 
 With `DS_TOOL_REASONING=hidden` the adapter withholds tool-turn reasoning, so a long thinking phase shows no deltas. Set `DS_TOOL_REASONING=clean` to stream protocol-cleaned reasoning and prose while the call markup stays internal.
 
+Answer text is a separate switch: `DS_STREAM_CONTENT=buffered` (default) sends a tool turn's prose once, after the parse, while `DS_STREAM_CONTENT=live` types it out as it arrives. Live mode is opt-in because a turn the parser rejects is retried, and the retry's verdict replaces the first one — text already on screen cannot be taken back, so the replacement simply appends nothing and the visible prose can differ from the stored message. Keep `buffered` when transcript fidelity matters more than time-to-first-character.
+
 ### The model refuses instead of calling a tool
 
 Tool calling is prompt-simulated. Check that:

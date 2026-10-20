@@ -174,6 +174,8 @@ The parser may accept observed malformed variants at the untrusted output bounda
 
 When a tool call appears only in reasoning, promote the structured call without leaking raw tags. `DS_TOOL_REASONING=hidden` is the safe default; `clean` may expose only protocol-cleaned reasoning.
 
+Tool-turn answer text follows the same rule: `DS_STREAM_CONTENT=buffered` (default) shows it only after the parse, while `live` releases it through the streaming gate, which may hold text back but must never retract released text or emit protocol markup. A retried attempt replaces the first verdict, so an attempt whose live prose already reached the client must not append a second answer.
+
 ## Documentation contract
 
 Public behavior changes must update the relevant documents:

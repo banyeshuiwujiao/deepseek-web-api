@@ -212,6 +212,7 @@ DeepSeek Web 没有 OpenAI 原生 function calling。本项目把 tools/function
 | `DS_DEBUG` | `false` | 增加调试日志和 HTTP error stack |
 | `DS_TOOL_REASONING` | `hidden` | 工具轮 reasoning：`hidden` 或 `clean`；`clean` 才实时下发思考增量 |
 | `DS_TOOLS` | `text` | 提示词要求的工具协议：`text` 为 JSON 块，`native` 为网页标记协议；两种都能解析 |
+| `DS_STREAM_CONTENT` | `buffered` | 工具轮正文：`buffered` 解析完成后一次下发，`live` 走同一道闸门实时下发（只扣不回，标记不外泄） |
 
 可复制 `.env.example` 为 `.env`。启动时读取该文件，但不会覆盖已存在的进程环境变量。
 

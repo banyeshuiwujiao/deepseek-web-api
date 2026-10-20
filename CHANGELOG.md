@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- `DS_STREAM_CONTENT=live` releases tool-turn answer prose through the protocol gate as it arrives instead of waiting for the parse (default stays `buffered`). The gate only holds text back and never retracts it, the post-parse chunk sends only the tail the client has not seen, and a retried attempt appends nothing because its verdict replaces the first one.
+- `GET /health` reports the effective `streamContent` mode, and `live-tool-content` joins `capabilities` as the feature floor for the behavior above.
 - `POST /v1/chat/completions` streaming carries a non-standard `diagnostics` object on the final chunk (`protocolShape`, `protocolTruncated`, character counts, call count, retry flags), so local clients can log the parse verdict per turn instead of asking maintainers to decompress session logs.
 
 ## [0.2.0] - 2026-10-20
