@@ -27,7 +27,7 @@ export async function routeRequest(
 
   const path = pathname(request);
   if (request.method === "GET" && path === "/health") {
-    writeJson(response, 200, { ok: true });
+    writeJson(response, 200, { ok: true, ...dependencies.health() });
     return;
   }
   if (path.startsWith("/v1/") && !requireApiKey(request, response, dependencies.apiKeys)) return;

@@ -22,6 +22,19 @@ x-api-key: <api-key>
 
 `GET /health` is intentionally unauthenticated. The API key comes from `DS_API_KEY`, `DS_API_KEY_FILE`, or the generated `data/.api-key` file.
 
+It answers with the running build and the switches that local clients (the DSH plugin) must match, so a process left over from an older build cannot silently reintroduce fixed behavior:
+
+```json
+{
+  "ok": true,
+  "version": "0.1.0",
+  "toolReasoning": "clean",
+  "toolCalls": "text",
+  "authReady": true,
+  "authAgeMs": 123456
+}
+```
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -29,7 +42,7 @@ x-api-key: <api-key>
 | `POST` | `/v1/responses` | Responses API compatible text response |
 | `POST` | `/v1/chat/completions` | Chat Completions compatible text response |
 | `GET` | `/v1/models` | Public model aliases |
-| `GET` | `/health` | Process health only; does not probe DeepSeek on every call |
+| `GET` | `/health` | Process health plus the build and protocol switches; does not probe DeepSeek on every call |
 
 ## Models
 

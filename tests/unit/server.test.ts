@@ -52,9 +52,27 @@ async function baseUrl(server: Server): Promise<string> {
 
 describe("HTTP server routes", () => {
   it("keeps health open and protects /v1 routes", async () => {
-    const server = createServer({ client: testClient(), apiKeys: ["secret", "also-secret"], debug: false });
+    const server = createServer({
+      client: testClient(),
+      apiKeys: ["secret", "also-secret"],
+      debug: false,
+      health: () => ({
+        version: "9.9.9",
+        toolReasoning: "clean",
+        toolCalls: "text",
+        authReady: false,
+        authAgeMs: null,
+      }),
+    });
     const url = await baseUrl(server);
-    expect(await fetch(`${url}/health`).then((response) => response.json())).toEqual({ ok: true });
+    expect(await fetch(`${url}/health`).then((response) => response.json())).toEqual({
+      ok: true,
+      version: "9.9.9",
+      toolReasoning: "clean",
+      toolCalls: "text",
+      authReady: false,
+      authAgeMs: null,
+    });
     expect((await fetch(`${url}/v1/models`)).status).toBe(401);
     const models = await fetch(`${url}/v1/models`, {
       headers: { authorization: "Bearer secret" },

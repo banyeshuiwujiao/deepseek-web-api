@@ -10,6 +10,7 @@ import { DeepSeekClient } from "./deepseek/client.js";
 import { SessionStore } from "./deepseek/sessionStore.js";
 import { loadApiKey } from "./server/authMiddleware.js";
 import { createServer } from "./server/createServer.js";
+import { healthSnapshot } from "./server/health.js";
 import { errorMessage } from "./utils/errors.js";
 import { createLogger } from "./utils/logger.js";
 import { isRecord } from "./utils/json.js";
@@ -40,7 +41,12 @@ async function start(): Promise<void> {
   const { config, logger, client } = await buildRuntime();
   const apiKey = loadApiKey(config.apiKeyFile);
   await client.initialize();
-  const server = createServer({ client, apiKeys: apiKey.keys, debug: config.debug });
+  const server = createServer({
+    client,
+    apiKeys: apiKey.keys,
+    debug: config.debug,
+    health: () => healthSnapshot(config, packageVersion()),
+  });
   await listen(server, config.port, config.host);
   logger.info(`deepseek-web-api 已启动：http://${config.host}:${config.port}`);
   logger.info("路由：POST /v1/responses、POST /v1/chat/completions、GET /v1/models、GET /health");
