@@ -105,7 +105,10 @@ export class DeepSeekClient {
     }
 
     const completed = await this.withToolRecovery(body, initialRun, async (run, _retry, final) => {
-      const value = await consumeToolChat(run, final ? EMPTY_TOOL_RESPONSE_TEXT : "");
+      const value = await consumeToolChat(run, final ? EMPTY_TOOL_RESPONSE_TEXT : "", {
+        streamReasoning: this.config.toolReasoning === "clean",
+        emit,
+      });
       return { value, diagnostics: toolDiagnostics(value.outcome) };
     });
     const sessionText = emitToolChat(
@@ -161,7 +164,7 @@ export class DeepSeekClient {
       : undefined;
     const built = retryFrom
       ? null
-      : buildDeepSeekPrompt(body, { reusedSession, ...(previous ? { previous } : {}) });
+      : buildDeepSeekPrompt(body, { reusedSession, toolsMode: this.config.toolCalls, ...(previous ? { previous } : {}) });
     const prompt = retryFrom
       ? buildToolRecoveryPrompt(body, retryFrom.requestTurns, retryFrom.latestUserText).trim()
       : built?.prompt.trim() ?? "";
@@ -262,6 +265,8 @@ export class DeepSeekClient {
       reasoningChars: diagnostics.reasoningChars,
       outputChars: diagnostics.outputChars,
       toolCallCount: diagnostics.toolCallCount,
+      protocolShape: diagnostics.protocolShape,
+      protocolTruncated: diagnostics.protocolTruncated,
       emptyUpstream: diagnostics.emptyUpstream,
       retry: run.retry,
     };

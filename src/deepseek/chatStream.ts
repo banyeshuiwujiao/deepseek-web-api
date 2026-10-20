@@ -3,6 +3,8 @@ import type { ToolReasoningMode } from "../config/env.js";
 import type { CompletionDiagnostics } from "./mapResponses.js";
 import type { MessageId } from "./sessionStore.js";
 import { canonicalParsedAssistantText, parseToolCalls } from "./toolCalls.js";
+import { protocolShape } from "./dsmlCalls.js";
+import { ProtocolTextGate } from "./toolStream.js";
 import { resolveToolTurn, type ToolTurnOutcome } from "./toolOutcome.js";
 import type { PublicModel } from "./types.js";
 import { iterDeepSeekUpdates } from "./updates.js";
@@ -36,6 +38,12 @@ export interface PlainChatResult {
 export interface ToolChatResult {
   outcome: ToolTurnOutcome;
   responseMessageId: MessageId;
+  streamedReasoning: boolean;
+}
+
+export interface ToolChatOptions {
+  streamReasoning: boolean;
+  emit?: (chunk: ChatStreamChunk) => void;
 }
 
 function chatChunk(
@@ -114,19 +122,50 @@ export async function streamPlainChat(
   };
 }
 
-export async function consumeToolChat(run: ChatRun, emptyFallback: string): Promise<ToolChatResult> {
+export async function consumeToolChat(
+  run: ChatRun,
+  emptyFallback: string,
+  options: ToolChatOptions = { streamReasoning: false },
+): Promise<ToolChatResult> {
+  const created = Math.floor(Date.now() / 1000);
+  const reasoningGate = new ProtocolTextGate();
   let responseText = "";
-  let reasoningText = "";
   let responseMessageId: MessageId = null;
+  let streamedReasoning = false;
+  let roleSent = false;
+  const writeDelta = (delta: Record<string, unknown>): void => {
+    if (!options.emit) return;
+    const withRole = roleSent ? delta : { role: "assistant", ...delta };
+    roleSent = true;
+    options.emit(chatChunk(run, created, withRole, null));
+  };
+  const sendReasoning = (text: string): void => {
+    if (!options.emit || !options.streamReasoning || !text) return;
+    streamedReasoning = true;
+    writeDelta({ reasoning_content: text });
+  };
+
   for await (const update of iterDeepSeekUpdates(run.upstream)) {
     if (update.type === "ready") {
       responseMessageId = update.responseMessageId ?? responseMessageId;
-    } else if (update.type === "reasoning" && update.delta) reasoningText += update.delta;
-    else if (update.type === "output" && update.delta) responseText += update.delta;
+    } else if (update.type === "reasoning" && update.delta) {
+      sendReasoning(reasoningGate.push(update.delta));
+    } else if (update.type === "output" && update.delta) {
+      // Buffered on purpose: only the authoritative parse may decide what becomes visible content, so a
+      // partially arrived call marker can never reach the client as prose.
+      responseText += update.delta;
+    }
   }
+
   return {
-    outcome: resolveToolTurn(responseText, reasoningText, `chatcmpl_${run.sessionId}`, emptyFallback),
+    outcome: resolveToolTurn(
+      responseText,
+      reasoningGate.text,
+      `chatcmpl_${run.sessionId}`,
+      emptyFallback,
+    ),
     responseMessageId,
+    streamedReasoning,
   };
 }
 
@@ -138,10 +177,12 @@ export function toolDiagnostics(outcome: ToolTurnOutcome): CompletionDiagnostics
     emptyUpstream: outcome.emptyUpstream,
     recoverableEmpty: outcome.recoverableEmpty,
     promotedReasoning: outcome.promotedReasoning,
+    protocolShape: protocolShape(outcome.outputText),
+    protocolTruncated: outcome.protocolTruncated,
   };
 }
 
-/** Emit one buffered tool-compatible result after retry selection. */
+/** Emit one buffered tool result after retry selection, skipping reasoning that already streamed live. */
 export function emitToolChat(
   run: ChatRun,
   result: ToolChatResult,
@@ -159,17 +200,17 @@ export function emitToolChat(
   const finishReason = parsed.toolCalls.length > 0 ? "tool_calls" : "stop";
 
   if (parsed.toolCalls.length > 0) {
-    if (toolReasoning === "clean") {
+    if (toolReasoning === "clean" && !result.streamedReasoning) {
       const cleanedReason = parseToolCalls(result.outcome.reasoningText).content;
       if (cleanedReason) writeDelta({ reasoning_content: cleanedReason });
     }
     if (parsed.content) writeDelta({ content: parsed.content });
     writeDelta({ tool_calls: parsed.toolCalls.map((call, index) => ({ index, ...call })) });
   } else {
-    if (result.outcome.reasoningText && result.outcome.outputText.trim()) {
+    if (!result.streamedReasoning && result.outcome.reasoningText && result.outcome.outputText.trim()) {
       writeDelta({ reasoning_content: result.outcome.reasoningText });
     }
-    writeDelta({ content: parsed.content });
+    if (parsed.content) writeDelta({ content: parsed.content });
   }
 
   emit(finalChunk(run, created, finishReason));

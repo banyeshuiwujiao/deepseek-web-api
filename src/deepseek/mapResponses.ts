@@ -2,6 +2,7 @@
 import type { ToolReasoningMode } from "../config/env.js";
 import { ResponseEventWriter, type ResponseEmitter } from "./responseEvents.js";
 import type { MessageId } from "./sessionStore.js";
+import { protocolShape } from "./dsmlCalls.js";
 import { canonicalParsedAssistantText, parseToolCalls } from "./toolCalls.js";
 import { EMPTY_TOOL_RESPONSE_TEXT, resolveToolTurn } from "./toolOutcome.js";
 import type { ModelType, PublicModel } from "./types.js";
@@ -34,6 +35,9 @@ export interface CompletionDiagnostics {
   emptyUpstream: boolean;
   recoverableEmpty: boolean;
   promotedReasoning: boolean;
+  /** Which call markup the model actually used, and whether its payload had to be discarded. */
+  protocolShape?: string;
+  protocolTruncated?: boolean;
 }
 export interface MappedResponseResult {
   response: OpenAIResponse;
@@ -196,6 +200,8 @@ export async function consumeResponses(input: {
       emptyUpstream: toolOutcome?.emptyUpstream ?? (!reasoning.trim() && !outputText.trim()),
       recoverableEmpty: toolOutcome?.recoverableEmpty ?? false,
       promotedReasoning: toolOutcome?.promotedReasoning ?? false,
+      protocolShape: protocolShape(outputText),
+      protocolTruncated: toolOutcome?.protocolTruncated ?? false,
     },
   };
 }
