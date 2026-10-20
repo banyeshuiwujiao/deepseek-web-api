@@ -247,4 +247,22 @@ describe("buildDeepSeekPrompt", () => {
       ).prompt,
     ).toBe("hello");
   });
+
+  it("asks for native markup and hides the JSON protocol when DS_TOOLS is native", () => {
+    const body = {
+      messages: [{ role: "user", content: "List the files." }],
+      tools: [{ type: "function", function: { name: "pwsh", parameters: { type: "object" } } }],
+    };
+    const jsonTag = "<" + "tool_call" + ">";
+    const native = buildDeepSeekPrompt(body, { reusedSession: false, toolsMode: "native" });
+    const text = buildDeepSeekPrompt(body, { reusedSession: false });
+
+    expect(native.prompt).toContain('<invoke name="tool_name">');
+    expect(native.prompt).toContain("one parameter element per top-level argument");
+    expect(native.prompt).not.toContain(jsonTag);
+    expect(native.prompt).toContain('"name": "pwsh"');
+    expect(text.prompt).toContain(jsonTag);
+    expect(text.prompt).not.toContain('<invoke name="tool_name">');
+    expect(native.toolsFingerprint).not.toBe(text.toolsFingerprint);
+  });
 });

@@ -9,6 +9,8 @@ import {
 } from "./constants.js";
 
 export type ToolReasoningMode = "hidden" | "clean";
+/** Which text protocol the model is asked to use; both are parsed back into structured calls. */
+export type ToolCallMode = "text" | "native";
 
 export interface AppConfig {
   port: number;
@@ -24,6 +26,7 @@ export interface AppConfig {
   baseUrl: string;
   debug: boolean;
   toolReasoning: ToolReasoningMode;
+  toolCalls: ToolCallMode;
   /** Show Chrome UI. Default false (headless). Login always opens a visible window when needed. */
   showBrowser: boolean;
 }
@@ -62,6 +65,14 @@ function parseToolReasoning(raw: string | undefined): ToolReasoningMode {
   return value;
 }
 
+function parseToolCalls(raw: string | undefined): ToolCallMode {
+  const value = raw?.trim() || "text";
+  if (value !== "text" && value !== "native") {
+    throw new Error(`Invalid DS_TOOLS: ${value}; expected text or native`);
+  }
+  return value;
+}
+
 function parsePort(raw: string | undefined): number {
   const port = Number(raw || 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
@@ -89,6 +100,7 @@ export function loadConfig(cwd = process.cwd()): AppConfig {
     baseUrl: process.env.DS_BASE_URL?.trim() || DEEPSEEK_BASE_URL,
     debug: /^(1|true|yes|on)$/i.test(process.env.DS_DEBUG || ""),
     toolReasoning: parseToolReasoning(process.env.DS_TOOL_REASONING),
+    toolCalls: parseToolCalls(process.env.DS_TOOLS),
     showBrowser: /^(1|true|yes|on)$/i.test(process.env.DS_SHOW_BROWSER || ""),
   };
 }

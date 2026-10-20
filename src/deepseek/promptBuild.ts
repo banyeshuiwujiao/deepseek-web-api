@@ -1,6 +1,7 @@
 /** Builds one DeepSeek Web prompt from OpenAI-compatible request shapes. */
 import { createHash } from "node:crypto";
 
+import type { ToolCallMode } from "../config/env.js";
 import { isRecord } from "../utils/json.js";
 import { messageText } from "../utils/text.js";
 import type { MessageTurn, RequestBody } from "./types.js";
@@ -14,6 +15,7 @@ interface PreviousPromptState {
 
 export interface PromptBuildOptions {
   reusedSession: boolean;
+  toolsMode?: ToolCallMode;
   previous?: PreviousPromptState;
 }
 
@@ -125,24 +127,26 @@ function instructionText(body: RequestBody): string {
   return entries.join("\n\n");
 }
 
-function toolState(body: RequestBody): { text: string; fingerprint: string; hasTools: boolean } {
-  const tools = Array.isArray(body.tools) ? body.tools : [];
-  const functions = Array.isArray(body.functions) ? body.functions : [];
-  const hasTools = tools.length > 0 || functions.length > 0;
-  if (!hasTools) return { text: "", fingerprint: "", hasTools };
-  const state = {
-    tools,
-    functions,
-    tool_choice: body.tool_choice ?? body.function_call,
-    parallel_tool_calls: body.parallel_tool_calls,
-  };
-  const policy = [
-    "DeepSeek Web has no native function calling. Use only the tools listed below.",
-    "You are a tool-using agent. Prefer tools over refusal.",
-    "For real-time facts (weather, news, prices), local files, shell, browser, or anything requiring current or external data, you MUST call an available tool first.",
-    "Never claim you cannot help when a listed tool can obtain the data.",
-    "Do not answer with a pure prose refusal when tools exist. After tool results, then answer.",
-    "When no dedicated tool exists, use a listed general-purpose browser, web, or shell tool; never invent a tool name.",
+/** Protocol wording for one tool-call text shape; both shapes parse back into structured calls. */
+function toolProtocolLines(mode: ToolCallMode): string[] {
+  if (mode === "native") {
+    return [
+    "When a tool is needed, output only DeepSeek tool-call markup in the final RESPONSE channel and nothing else (no prose, no markdown fences).",
+    "Tool protocol is allowed only in the final RESPONSE channel.",
+    "Never place tool-call markup or tool JSON in THINK/reasoning.",
+    "Each call MUST be exactly this shape, with one parameter element per top-level argument:",
+    '<calls>\n<invoke name="tool_name">\n<parameter name="key" string="true">value\n</parameter>\n</invoke>\n</calls>',
+    "Rules:",
+    "- Open every tag and close every tag; never leave a call block unfinished.",
+    "- Write the tool name only in the invoke name attribute; never invent a tool name.",
+    "- Use string true for text values and string false for JSON values, matching the tool schema types.",
+    "- One parameter element per argument, and every value must be complete, not a draft.",
+    "- Multiple tools = multiple consecutive complete invoke blocks inside one calls block.",
+    "- When tools are needed, emit only finished call markup; never draft a partial call in RESPONSE.",
+    "- After tool results, you MUST either emit complete call markup in RESPONSE to gather more evidence, or write the final user-visible answer in RESPONSE.",
+    ];
+  }
+  return [
     "When a tool is needed, output ONLY exact blocks and nothing else (no prose, no markdown fences).",
     "Tool protocol is allowed only in the final RESPONSE channel.",
     "Never place <tool_call> blocks or tool JSON in THINK/reasoning.",
@@ -156,6 +160,29 @@ function toolState(body: RequestBody): { text: string; fingerprint: string; hasT
     "- Multiple tools = multiple consecutive complete blocks.",
     "- When tools are needed, emit only finished call blocks; never draft a partial call in RESPONSE.",
     "- After tool results, you MUST either emit complete <tool_call> blocks in RESPONSE to gather more evidence, or write the final user-visible answer in RESPONSE.",
+  ];
+}
+
+function toolState(body: RequestBody, mode: ToolCallMode): { text: string; fingerprint: string; hasTools: boolean } {
+  const tools = Array.isArray(body.tools) ? body.tools : [];
+  const functions = Array.isArray(body.functions) ? body.functions : [];
+  const hasTools = tools.length > 0 || functions.length > 0;
+  if (!hasTools) return { text: "", fingerprint: "", hasTools };
+  const state = {
+    tools,
+    functions,
+    tool_choice: body.tool_choice ?? body.function_call,
+    parallel_tool_calls: body.parallel_tool_calls,
+    protocol: mode,
+  };
+  const policy = [
+    "DeepSeek Web has no native function calling. Use only the tools listed below.",
+    "You are a tool-using agent. Prefer tools over refusal.",
+    "For real-time facts (weather, news, prices), local files, shell, browser, or anything requiring current or external data, you MUST call an available tool first.",
+    "Never claim you cannot help when a listed tool can obtain the data.",
+    "Do not answer with a pure prose refusal when tools exist. After tool results, then answer.",
+    "When no dedicated tool exists, use a listed general-purpose browser, web, or shell tool; never invent a tool name.",
+    ...toolProtocolLines(mode),
     "- Never end with THINK-only. Never output an empty RESPONSE when tools are available and analysis is incomplete.",
     "- For codebase analysis, prefer reading src/**, CI workflows, and tests before the final summary.",
     "- Do not invent tool names. Do not execute tools yourself.",
@@ -212,7 +239,7 @@ export function buildToolRecoveryPrompt(
   const names = configuredToolNames(body);
   const policy = [
     "The previous upstream completion produced no usable tool call or final answer. Continue the same task.",
-    "After tool results, output either complete <tool_call> JSON blocks in RESPONSE or the final user-visible answer in RESPONSE.",
+    "After tool results, output either complete tool-call blocks in RESPONSE or the final user-visible answer in RESPONSE.",
     "Never end with THINK-only and never leave RESPONSE empty.",
     names.length ? `Available tools: ${names.join(", ")}` : "",
   ].filter(Boolean).join("\n");
@@ -229,7 +256,7 @@ export function buildDeepSeekPrompt(body: RequestBody, options: PromptBuildOptio
   const selectedTurns = options.reusedSession ? newTurns(turns, options.previous?.turns) : turns;
   const instructions = instructionText(body);
   const currentInstructionFingerprint = hash(instructions);
-  const tools = toolState(body);
+  const tools = toolState(body, options.toolsMode ?? "text");
   const sections: string[] = [];
   // DeepSeek Web session memory is not a trusted instruction boundary; restate policy every turn.
   if (instructions) sections.push(`[Instructions]\n${instructions}`);

@@ -33,6 +33,7 @@ function testClient(): DeepSeekClient {
     baseUrl: "https://chat.deepseek.com",
     debug: false,
     toolReasoning: "hidden",
+    toolCalls: "text",
     showBrowser: false,
   };
   const logger = createLogger(false);
