@@ -7,7 +7,8 @@ import type { ModelType } from "./types.js";
 export interface PreparedCompletion {
   token: string;
   powHeader: string;
-  sessionId: string;
+  /** Null when the caller only asked for a proof (uploads do not need a chat session). */
+  sessionId: string | null;
   modelType: ModelType;
   reused: boolean;
 }
@@ -16,7 +17,7 @@ export interface PreparedCompletion {
  * Browser script kept as a plain string so tsx/esbuild never injects __name helpers
  * into Playwright page.evaluate payloads.
  */
-const PREPARE_SCRIPT = `async ({ powWorkerUrl, modelType, fallbackToken, sessionId, reuseSession, headers, targetPath }) => {
+const PREPARE_SCRIPT = `async ({ powWorkerUrl, modelType, fallbackToken, sessionId, reuseSession, headers, targetPath, createSession }) => {
   const record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
   let token = fallbackToken;
   const rawToken = localStorage.getItem("userToken");
@@ -105,6 +106,12 @@ const PREPARE_SCRIPT = `async ({ powWorkerUrl, modelType, fallbackToken, session
   for (const byte of encoded) binary += String.fromCharCode(byte);
   const powHeader = btoa(binary);
 
+  // Callers that only need a proof (an upload, say) skip session creation: a completion needs one, an
+  // upload does not, and creating one would litter the account with empty sessions.
+  if (createSession === false) {
+    return { token, powHeader, sessionId: null, modelType, reused: false };
+  }
+
   let resolvedSessionId = sessionId;
   if (!reuseSession || !resolvedSessionId) {
     const sessionResponse = await fetch("/api/v0/chat_session/create", {
@@ -135,6 +142,10 @@ const PREPARE_SCRIPT = `async ({ powWorkerUrl, modelType, fallbackToken, session
 /**
  * Prepare one completion with a fresh PoW proof. Existing known sessions are reused;
  * otherwise the page creates exactly one new DeepSeek session.
+ *
+ * `targetPath` is the endpoint the proof is minted for: DeepSeek binds the challenge to a path
+ * (the spike confirmed upload_file needs its own challenge), so callers that only want a proof --
+ * uploads, for instance -- pass `createSession: false` and their own path.
  */
 export async function prepareCompletion(input: {
   page: Page;
@@ -143,13 +154,20 @@ export async function prepareCompletion(input: {
   fallbackToken: string;
   sessionId: string | null;
   reuseSession: boolean;
+  targetPath?: string;
+  createSession?: boolean;
 }): Promise<PreparedCompletion> {
   const { page, ...payload } = input;
   return page.evaluate(
     async ({ script, arg }) => (0, eval)("(" + script + ")")(arg),
     {
       script: PREPARE_SCRIPT,
-      arg: { ...payload, headers: CLIENT_HEADERS, targetPath: COMPLETION_PATH },
+      arg: {
+        ...payload,
+        targetPath: payload.targetPath ?? COMPLETION_PATH,
+        createSession: payload.createSession !== false,
+        headers: CLIENT_HEADERS,
+      },
     },
   ) as Promise<PreparedCompletion>;
 }
