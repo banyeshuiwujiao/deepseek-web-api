@@ -1,4 +1,5 @@
 /** Maps public model and feature options to DeepSeek Web boolean capabilities. */
+import { MAX_REF_FILE_IDS } from "../config/constants.js";
 import type { ModelResolution, ModelType, PublicModel, RequestBody } from "./types.js";
 import { isRecord } from "../utils/json.js";
 
@@ -51,4 +52,20 @@ export function resolveSearch(body: RequestBody, modelType: ModelType): boolean 
     const type = isRecord(tool) ? tool.type : tool;
     return /search|web/i.test(String(type ?? ""));
   });
+}
+
+/**
+ * Upstream file ids to attach to a completion (DeepSeek's `ref_file_ids`).
+ *
+ * Scope for now: pass through ids a caller already holds (`ref_file_ids` / `file_ids` on the request
+ * body). Mapping OpenAI shapes (image_url data URLs, input_file) onto real uploads is deliberately
+ * *not* here yet -- that needs the body-size and logging work tracked separately, so shipping the
+ * transport first keeps this step revertable on its own.
+ */
+export function resolveFileIds(body: RequestBody): string[] {
+  const raw = body.ref_file_ids ?? body.file_ids;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .slice(0, MAX_REF_FILE_IDS);
 }

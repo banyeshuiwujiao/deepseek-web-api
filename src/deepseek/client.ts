@@ -18,7 +18,7 @@ import {
   type MappedResponseResult,
   type ResponseEmitter,
 } from "./mapResponses.js";
-import { resolveIncludeUsage, resolveModel, resolveSearch, resolveThinking } from "./models.js";
+import { resolveFileIds, resolveIncludeUsage, resolveModel, resolveSearch, resolveThinking } from "./models.js";
 import { prepareCompletion } from "./pow.js";
 import { buildDeepSeekPrompt, buildToolRecoveryPrompt } from "./promptBuild.js";
 import type { MessageId, SessionStore } from "./sessionStore.js";
@@ -41,6 +41,7 @@ interface PreparedRun extends ChatRun {
   toolsFingerprint: string;
   latestUserText: string;
   hasTools: boolean;
+  fileIds: readonly string[];
   retry: number;
 }
 interface BufferedResponse {
@@ -137,6 +138,8 @@ export class DeepSeekClient {
     const { modelType, publicModel } = resolveModel(body);
     const thinking = resolveThinking(body);
     const search = resolveSearch(body, modelType);
+    // Attachments must not change across a retry: the retry reuses the same upstream files.
+    const fileIds = retryFrom ? retryFrom.fileIds : resolveFileIds(body);
     const conversation = retryFrom ? null : this.sessions.resolve(body);
     const reusedSession = retryFrom
       ? false
@@ -162,21 +165,24 @@ export class DeepSeekClient {
       sessionId: retryFrom ? null : reusedSession ? conversation?.sessionId ?? null : null,
       reuseSession: retryFrom ? false : reusedSession,
     });
+    const sessionId = prepared.sessionId;
+    if (!sessionId) throw new HttpError(502, "deepseek did not return a chat session");
     const parentMessageId = retryFrom
       ? null
       : reusedSession
-        ? conversation?.parentMessageId ?? this.sessions.get(prepared.sessionId)?.lastResponseMessageId ?? null
+        ? conversation?.parentMessageId ?? this.sessions.get(sessionId)?.lastResponseMessageId ?? null
         : null;
     const currentAuth = await this.login.dumpCurrent();
     const upstream = await openCompletionStream(this.config.baseUrl, currentAuth, {
       token: prepared.token,
       powHeader: prepared.powHeader,
-      sessionId: prepared.sessionId,
+      sessionId,
       modelType,
       prompt,
       thinking,
       search,
       parentMessageId,
+      fileIds,
     });
     const retry = retryFrom ? retryFrom.retry + 1 : 0;
     this.logger.debug("DeepSeek completion prepared", {
@@ -188,11 +194,12 @@ export class DeepSeekClient {
       modelType,
       thinking,
       search,
+      fileCount: fileIds.length,
     });
     return {
       upstream,
       prompt,
-      sessionId: prepared.sessionId,
+      sessionId,
       parentMessageId,
       modelType,
       publicModel,
@@ -210,6 +217,7 @@ export class DeepSeekClient {
       toolsFingerprint: retryFrom ? retryFrom.toolsFingerprint : built?.toolsFingerprint ?? "",
       latestUserText: retryFrom ? retryFrom.latestUserText : built?.latestUserText ?? "",
       hasTools: retryFrom ? retryFrom.hasTools : built?.hasTools ?? false,
+      fileIds,
       retry,
     };
   }

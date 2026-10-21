@@ -12,6 +12,11 @@ export interface CompletionRequest {
   thinking: boolean;
   search: boolean;
   parentMessageId: MessageId;
+  /**
+   * Upstream file ids to attach. Empty keeps the historical behaviour; DeepSeek caps this at 50 per
+   * turn (client/settings file_feature.max_input_file_count).
+   */
+  fileIds?: readonly string[];
 }
 
 /** Send the compatibility prompt and stored parent message ID to preserve lineage. */
@@ -41,7 +46,7 @@ export async function openCompletionStream(
       parent_message_id: input.parentMessageId,
       model_type: input.modelType,
       prompt: input.prompt,
-      ref_file_ids: [],
+      ref_file_ids: input.fileIds ? [...input.fileIds] : [],
       thinking_enabled: input.thinking,
       search_enabled: input.search,
       action: null,
