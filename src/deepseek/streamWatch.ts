@@ -6,8 +6,16 @@
  * came back empty, including a 634 character one. Prompt size therefore cannot be the classifier. The
  * counters below separate "the upstream never started answering" from "the upstream sent content our
  * parser failed to recognize", which are opposite failures and need opposite fixes.
+ *
+ * Update 2026-10-21: the ladder proved prompt size *is* a classifier, but only far above that log's band.
+ * Turns up to 1,850,168 Chinese characters (4.22MB UTF-8, 957,921 upstream tokens) answer with every
+ * needle intact; from 1,900,163 characters the upstream returns a silent empty turn. So size never
+ * explains an empty turn at 300k characters -- it does explain one at 5MB -- and
+ * `emptyUpstreamFailure` now splits those two cases instead of treating all empties as availability.
  */
 import { HttpError } from "../utils/errors.js";
+import { estimatePromptTokens } from "../utils/promptTokens.js";
+import { OVERSIZED_PROMPT_MIN_TOKENS } from "../config/constants.js";
 import type { DeepSeekSseEvent } from "./types.js";
 
 /** Raw stream facts collected while the SSE body is consumed. Nothing here guesses at intent. */
@@ -161,13 +169,29 @@ export function attributionFields(evidence: EmptyStreamEvidence | null | undefin
  * Only two of the three verdicts are safe to describe as an upstream failure: when the parser dropped
  * content the upstream did answer, and pretending otherwise would send the user to retry a turn that is
  * really our bug.
+ *
+ * `promptTokens` is required, not defaulted to `promptChars`: characters are not a token proxy for any
+ * language, and a caller that forgets to estimate would silently turn every million-character prompt
+ * into a non-retryable "window full" diagnosis.
  */
 export function emptyUpstreamFailure(
   evidence: EmptyStreamEvidence | null | undefined,
   promptChars: number,
+  promptTokens: number,
 ): Error | null {
   if (!evidence) return null;
   if (evidence.verdict === "parser-dropped-content") return null;
+  // Past the measured window an empty turn is the ceiling, not the weather. Retryable would make the
+  // client re-send a prompt that cannot fit three times over; 413 plus the wording below lands as the
+  // non-retryable CONTEXT_WINDOW_EXCEEDED on the DSH side, i.e. one identifiable failure.
+  if (promptTokens >= OVERSIZED_PROMPT_MIN_TOKENS) {
+    return new HttpError(
+      413,
+      `DeepSeek Web rejected an oversized turn (${evidence.verdict}; maximum context reached: the reply ` +
+        `came back empty at promptChars=${promptChars}, estimatedTokens=${promptTokens}, window is about ` +
+        `1M tokens). Shorten the conversation or start a new session.`,
+    );
+  }
   const status = evidence.sawReady ? 504 : 502;
   const reason = evidence.sawReady
     ? "the upstream opened a reply but produced no reasoning and no answer text"
@@ -180,4 +204,28 @@ export function emptyUpstreamFailure(
     // to deny it. "unrelated to prompt size" carries the same meaning without tripping the detector.
     "This is an upstream availability failure, unrelated to prompt size.";
   return new HttpError(status, message);
+}
+
+/**
+ * Guard for plain text turns, which used to end as an ordinary `finish_reason: "stop"` carrying zero
+ * content. That is indistinguishable from "the model answered, and the answer was empty", so the client
+ * could only guess at EMPTY_RESPONSE and retry a prompt that cannot fit three times over.
+ *
+ * No logging here on purpose: the caller's logAttempt() has just written the same fields, including the
+ * verdict, and the thrown message carries the prompt sizes.
+ *
+ * Lives here rather than on the client because `client.ts` sits at the 300 line ceiling the repo enforces,
+ * and this is a stream-attribution rule, not an orchestration one.
+ */
+export function assertTextTurnProduced(
+  diagnostics: { emptyUpstream?: boolean; streamEvidence?: EmptyStreamEvidence },
+  prompt: string,
+): void {
+  if (!diagnostics.emptyUpstream) return;
+  const failure = emptyUpstreamFailure(
+    diagnostics.streamEvidence,
+    prompt.length,
+    estimatePromptTokens(prompt),
+  );
+  if (failure) throw failure;
 }

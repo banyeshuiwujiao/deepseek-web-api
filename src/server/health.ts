@@ -29,6 +29,8 @@ export const CAPABILITIES = Object.freeze([
   "health-self-description", // this endpoint reports version, switches, and capabilities
   "live-tool-content", // DS_STREAM_CONTENT=live releases gated tool-turn prose before the parse
   "empty-stream-attribution", // empty turns carry a verdict from stream counters, not from prompt size
+  "text-turn-empty-failure", // an empty text turn raises instead of ending as an empty finish_reason:stop
+  "oversized-prompt-failure", // past the measured ceiling that failure is 413, so the client stops retrying
 ] as const);
 
 /**

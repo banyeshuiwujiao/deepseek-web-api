@@ -67,6 +67,20 @@ It answers with the running build and the switches that local clients (the DSH p
 
 Unknown model strings containing `pro` or `expert` resolve to expert mode; other unknown strings resolve to flash mode. Clients should use the two public IDs returned by `/v1/models`.
 
+### Measured context ceiling
+
+This proxy enforces no context limit of its own (only the 16 MiB request body cap in `src/server/routes.ts`), so the ceiling is the web model's. Measured on 2026-10-21 by planting random needles at 2%/25%/50%/75%/98% of a filler prompt against `deepseek-v4-flash`:
+
+| Prompt | Upstream accumulated tokens | Result |
+| --- | --- | --- |
+| 1,850,168 Chinese characters (4.22 MB UTF-8) | 957,921 | all five needles recovered |
+| 1,900,163 characters (4.33 MB) | 0 | silent empty turn |
+| 2,400,179 characters (5.47 MB) | 0 | silent empty turn, reproducible |
+
+So the window is the advertised ~1M tokens, and this text converts at 0.518 tokens per character. Note that `usage.completion_tokens` carries the upstream *accumulated* counter, not just the reply: with `prompt_tokens` pinned at 0 it is the only token reading the web endpoint exposes, and it is what the table above is measured against.
+
+An oversized turn is **not** reported as an HTTP error. The upstream answers `200 text/event-stream` with a single empty delta and `finish_reason: "stop"`, which is indistinguishable from a successful empty reply, so `assertTextTurnProduced` (`src/deepseek/streamWatch.ts`) raises the attributed failure for text turns too, and past `OVERSIZED_PROMPT_MIN_TOKENS` that failure is a `413` whose wording the DSH plugin maps to the non-retryable `CONTEXT_WINDOW_EXCEEDED`. See [Errors](#errors).
+
 ## Responses API
 
 ### Commonly supported request fields

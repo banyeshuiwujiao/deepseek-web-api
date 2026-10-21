@@ -8,6 +8,7 @@
  */
 import type { CompletionDiagnostics } from "./mapResponses.js";
 import { emptyUpstreamFailure } from "./streamWatch.js";
+import { estimatePromptTokens } from "../utils/promptTokens.js";
 import type { Logger } from "../utils/logger.js";
 
 export interface RecoveryAttempt<T> {
@@ -42,7 +43,11 @@ export async function withToolRecovery<T, Run extends { prompt: string }>(
     return { ...second, run: retryRun, retry: 1 };
   }
 
-  const failure = emptyUpstreamFailure(second.diagnostics.streamEvidence, retryRun.prompt.length);
+  const failure = emptyUpstreamFailure(
+    second.diagnostics.streamEvidence,
+    retryRun.prompt.length,
+    estimatePromptTokens(retryRun.prompt),
+  );
   if (failure) {
     // Delivering the apology string as ordinary content made DSH report a completed turn; the plugin's own
     // EMPTY_RESPONSE path could never fire, and nobody reading the log could tell availability from success.

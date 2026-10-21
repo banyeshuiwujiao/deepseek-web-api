@@ -25,7 +25,7 @@ import { buildDeepSeekPrompt, buildToolRecoveryPrompt } from "./promptBuild.js";
 import type { MessageId, SessionStore } from "./sessionStore.js";
 import { canonicalAssistantText } from "./toolCalls.js";
 import { EMPTY_TOOL_RESPONSE_TEXT } from "./toolOutcome.js";
-import { attributionFields } from "./streamWatch.js";
+import { attributionFields, assertTextTurnProduced } from "./streamWatch.js";
 import { withToolRecovery } from "./toolRecovery.js";
 import type { MessageTurn, ModelType, RequestBody } from "./types.js";
 
@@ -71,6 +71,7 @@ export class DeepSeekClient {
         ...(emit ? { emit } : {}),
       });
       this.logAttempt(initialRun, result.diagnostics);
+      assertTextTurnProduced(result.diagnostics, initialRun.prompt);
       this.remember(initialRun, result.responseMessageId, result.rawOutputText);
       this.setResponseMetadata(result, initialRun, 0);
       return result;
@@ -107,6 +108,7 @@ export class DeepSeekClient {
     if (!initialRun.hasTools) {
       const result = await streamPlainChat(initialRun, emit);
       this.logAttempt(initialRun, result.diagnostics);
+      assertTextTurnProduced(result.diagnostics, initialRun.prompt);
       this.remember(initialRun, result.responseMessageId, result.finalText);
       return;
     }

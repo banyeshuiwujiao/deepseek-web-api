@@ -2,12 +2,18 @@
 import { describe, expect, it } from "vitest";
 
 import { consumeToolChat, streamPlainChat, type ChatRun, type ChatStreamChunk } from "../../src/deepseek/chatStream.js";
+import { OVERSIZED_PROMPT_MIN_TOKENS } from "../../src/config/constants.js";
+import { estimatePromptTokens } from "../../src/utils/promptTokens.js";
+import { errorMessage, errorStatus } from "../../src/utils/errors.js";
 import {
   attributionFields,
+  assertTextTurnProduced,
   classifyEmptyStream,
   createStreamWatch,
+  emptyUpstreamFailure,
   holdsUnrecognizedContent,
   observeFrame,
+  type EmptyStreamEvidence,
   type StreamWatch,
 } from "../../src/deepseek/streamWatch.js";
 import type { DeepSeekSseEvent } from "../../src/deepseek/types.js";
@@ -142,5 +148,98 @@ describe("empty-turn attribution in the chat path", () => {
     expect(result.diagnostics.emptyUpstream).toBe(false);
     expect(result.diagnostics.emptyVerdict).toBeUndefined();
     expect(result.diagnostics.streamEvidence).toBeUndefined();
+  });
+});
+
+describe("emptyUpstreamFailure", () => {
+  /**
+   * Kept byte-for-byte in sync with CONTEXT_OVERFLOW in the plugin's lib/openai.js. That regex is what
+   * decides whether DSH files the failure as non-retryable CONTEXT_WINDOW_EXCEEDED or as retryable
+   * SERVER, so the contract across the two repositories can only be pinned down here.
+   */
+  const CONTEXT_OVERFLOW =
+    /context[\s_-]?(?:length|window)[\s_-]?(?:exceed|overflow|limit)|(?:prompt|input|messages?)\s+(?:is\s+|are\s+)?too\s+(?:large|long)|maximum context/i;
+
+  const evidence = (over: Partial<EmptyStreamEvidence> = {}): EmptyStreamEvidence => ({
+    verdict: "upstream-not-started",
+    events: 0,
+    sawReady: false,
+    sawClose: false,
+    sawContentPayload: false,
+    droppedContentFrames: 0,
+    ...over,
+  });
+
+  it("keeps an ordinary empty turn retryable and never spells out the overflow phrase", () => {
+    const failure = emptyUpstreamFailure(evidence(), 634, 300);
+    expect(errorStatus(failure)).toBe(502);
+    expect(errorMessage(failure)).not.toMatch(CONTEXT_OVERFLOW);
+  });
+
+  it("says 504 when the upstream opened a reply and then said nothing", () => {
+    const failure = emptyUpstreamFailure(evidence({ verdict: "upstream-silent", sawReady: true }), 300_000, 90_000);
+    expect(errorStatus(failure)).toBe(504);
+    expect(errorMessage(failure)).not.toMatch(CONTEXT_OVERFLOW);
+  });
+
+  it("escalates to a non-retryable 413 past the measured window", () => {
+    const failure = emptyUpstreamFailure(evidence(), 2_400_179, OVERSIZED_PROMPT_MIN_TOKENS);
+    expect(errorStatus(failure)).toBe(413);
+    expect(errorMessage(failure)).toMatch(CONTEXT_OVERFLOW);
+  });
+
+  it("judges by estimated tokens, not by characters", () => {
+    // 2.4M ASCII characters is roughly 600k tokens, far inside a 1M window. Reading the character count
+    // as a token count -- the mistake this signature used to allow -- would file it non-retryable.
+    const failure = emptyUpstreamFailure(evidence(), 2_400_000, estimatePromptTokens("a".repeat(2_400_000)));
+    expect(errorStatus(failure)).toBe(502);
+    expect(errorMessage(failure)).not.toMatch(CONTEXT_OVERFLOW);
+  });
+
+  it("still blames the parser, not the window, when content arrived unread", () => {
+    expect(emptyUpstreamFailure(evidence({ verdict: "parser-dropped-content" }), 9e6, 9e6)).toBeNull();
+  });
+
+  it("reports nothing without evidence", () => {
+    expect(emptyUpstreamFailure(undefined, 9e6, 9e6)).toBeNull();
+  });});
+
+describe("assertTextTurnProduced", () => {
+  const silent: EmptyStreamEvidence = {
+    verdict: "upstream-not-started",
+    events: 0,
+    sawReady: false,
+    sawClose: false,
+    sawContentPayload: false,
+    droppedContentFrames: 0,
+  };
+  /** The ladder's filler: about 59% Han, the rest digits, punctuation and newlines. */
+  const line = (i: number) => `第${i}行：这是用于填充上下文的编号句子，编号${String(i).padStart(6, "0")}。\n`;
+  const ladderPrompt = (lines: number) => Array.from({ length: lines }, (_, i) => line(i + 1)).join("");
+
+  it("throws on a text turn that produced nothing at all", () => {
+    expect(() => assertTextTurnProduced({ emptyUpstream: true, streamEvidence: silent }, line(1)))
+      .toThrow(/empty turn/);
+  });
+
+  it("leaves a turn that produced content alone", () => {
+    expect(() => assertTextTurnProduced({ emptyUpstream: false }, ladderPrompt(70_000))).not.toThrow();
+  });
+
+  it("keeps the prompt that really worked retryable and fails the one that really did not", () => {
+    // 4,096 lines answered fine at 68,764 tokens; 56,395 lines answered fine at 957,921 tokens;
+    // 73,062 lines came back empty. The gate has to sit between the last two.
+    expect(() => assertTextTurnProduced({ emptyUpstream: true, streamEvidence: silent }, ladderPrompt(4_096)))
+      .toThrow(/unrelated to prompt size/);
+    expect(() => assertTextTurnProduced({ emptyUpstream: true, streamEvidence: silent }, ladderPrompt(56_395)))
+      .toThrow(/unrelated to prompt size/);
+    let oversized: unknown = null;
+    try {
+      assertTextTurnProduced({ emptyUpstream: true, streamEvidence: silent }, ladderPrompt(73_062));
+    } catch (error) {
+      oversized = error;
+    }
+    expect(errorStatus(oversized)).toBe(413);
+    expect(estimatePromptTokens(ladderPrompt(73_062))).toBeGreaterThanOrEqual(OVERSIZED_PROMPT_MIN_TOKENS);
   });
 });

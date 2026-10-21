@@ -36,7 +36,7 @@ function droppedEvidence(): EmptyStreamEvidence {
 
 describe("emptyUpstreamFailure", () => {
   it("reports an upstream that opened a reply and said nothing as a retryable 504", () => {
-    const failure = emptyUpstreamFailure(silentEvidence(), 4242);
+    const failure = emptyUpstreamFailure(silentEvidence(), 4242, 1200);
     expect(failure).toBeInstanceOf(HttpError);
     expect((failure as HttpError).status).toBe(504);
     expect((failure as Error).message).toContain("upstream-silent");
@@ -50,18 +50,18 @@ describe("emptyUpstreamFailure", () => {
   it("reports an upstream that never opened a reply as 502", () => {
     const watch = createStreamWatch();
     observeFrame(watch, { event: null, data: { finished: true } }, false);
-    const failure = emptyUpstreamFailure(classifyEmptyStream(watch), 10);
+    const failure = emptyUpstreamFailure(classifyEmptyStream(watch), 10, 4);
     expect((failure as HttpError).status).toBe(502);
     expect((failure as Error).message).toContain("upstream-not-started");
   });
 
   it("refuses to call it an upstream failure when the parser dropped the content", () => {
-    expect(emptyUpstreamFailure(droppedEvidence(), 10)).toBeNull();
+    expect(emptyUpstreamFailure(droppedEvidence(), 10, 4)).toBeNull();
   });
 
   it("stays silent when there is no attribution to lean on", () => {
-    expect(emptyUpstreamFailure(null, 10)).toBeNull();
-    expect(emptyUpstreamFailure(undefined, 10)).toBeNull();
+    expect(emptyUpstreamFailure(null, 10, 4)).toBeNull();
+    expect(emptyUpstreamFailure(undefined, 10, 4)).toBeNull();
   });
 });
 
