@@ -265,6 +265,19 @@ succeed.
 ## Not supported
 
 - Image, audio, video, or file input/upload
+
+  **Upstream status (spike, 2026-10-21):** DeepSeek Web *does* have a working file pipeline. A real
+  logged-in browser session was observed uploading a test image through
+  `POST /api/v0/file/upload_file` (multipart, `x-ds-pow-response` required) and receiving a file id that
+  `/api/v0/chat/completion` accepted in `ref_file_ids`; the model answered a question about the image's
+  content correctly. The declared caps live in `GET /api/v0/client/settings` under each model's
+  `file_feature`: `max_input_file_count: 50`, `max_upload_file_size: 104857600` (100 MiB),
+  `token_limit: 890880`, `vision: true`, and a ~1000-entry `support_file_exts` list.
+
+  This proxy still does not expose it: no input channel maps `image_url`/`input_file` to
+  `ref_file_ids`, so the entry above remains true from a client's point of view. What is missing is
+  product work (binary through our HTTP layer, quota and error mapping, session-lineage changes), not
+  an unknown upstream contract. See `docs/spike-file-upload.md`.
 - OpenAI-hosted background responses and response retrieval/cancel/delete endpoints
 - Native structured output / JSON schema enforcement
 - Native function calling or guaranteed parallel calls
