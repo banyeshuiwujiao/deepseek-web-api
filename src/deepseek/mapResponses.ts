@@ -214,6 +214,9 @@ export async function consumeResponses(input: {
       promotedReasoning: toolOutcome?.promotedReasoning ?? false,
       protocolShape: protocolShape(outputText),
       protocolTruncated: toolOutcome?.protocolTruncated ?? false,
+      // Same flattening trap as the chat paths: the failure classifier reads streamEvidence, and
+      // attributionFields only produces the log-shaped subset of it.
+      ...(emptyEvidence ? { streamEvidence: emptyEvidence } : {}),
       ...attributionFields(emptyEvidence),
     },
   };

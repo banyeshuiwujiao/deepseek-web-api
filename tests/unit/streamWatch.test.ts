@@ -1,7 +1,7 @@
 /** Verifies the stream watchdog attributes an empty turn instead of guessing at one. */
 import { describe, expect, it } from "vitest";
 
-import { consumeToolChat, streamPlainChat, type ChatRun, type ChatStreamChunk } from "../../src/deepseek/chatStream.js";
+import { consumeToolChat, streamPlainChat, toolDiagnostics, type ChatRun, type ChatStreamChunk } from "../../src/deepseek/chatStream.js";
 import { OVERSIZED_PROMPT_MIN_TOKENS } from "../../src/config/constants.js";
 import { estimatePromptTokens } from "../../src/utils/promptTokens.js";
 import { errorMessage, errorStatus } from "../../src/utils/errors.js";
@@ -148,6 +148,35 @@ describe("empty-turn attribution in the chat path", () => {
     expect(result.diagnostics.emptyUpstream).toBe(false);
     expect(result.diagnostics.emptyVerdict).toBeUndefined();
     expect(result.diagnostics.streamEvidence).toBeUndefined();
+  });
+});
+
+/**
+ * The wiring, not the classifier. All three paths used to spread attributionFields() -- which only
+ * flattens the verdict for the log -- and never attach streamEvidence, so every caller that reads
+ * diagnostics.streamEvidence (toolRecovery, assertTextTurnProduced) silently got undefined and
+ * attributed nothing. The classifier had its own unit tests the whole time; the connection did not.
+ */
+describe("diagnostics carry the evidence object, not just the flattened log fields", () => {
+  it("wires streamEvidence through the plain text path", async () => {
+    const chunks: ChatStreamChunk[] = [];
+    const result = await streamPlainChat(run(sse([ready()])), (chunk) => { chunks.push(chunk); });
+    expect(result.diagnostics.emptyUpstream).toBe(true);
+    expect(result.diagnostics.streamEvidence?.verdict).toBe("upstream-silent");
+    // and the guard that consumes it actually raises now, instead of ending the turn as empty success
+    expect(() => assertTextTurnProduced(result.diagnostics, "x".repeat(600))).toThrow(/empty turn/);
+  });
+
+  it("wires streamEvidence through the tool path that toolRecovery depends on", async () => {
+    const chunks: ChatStreamChunk[] = [];
+    const result = await consumeToolChat(
+      run(sse([ready(), 'data: {"p":"response","o":"BATCH","v":[]}\n\n'])),
+      "",
+      { streamReasoning: false, emit: (chunk) => { chunks.push(chunk); } },
+    );
+    const diagnostics = toolDiagnostics(result.outcome, result);
+    expect(diagnostics.streamEvidence?.verdict).toBe("upstream-silent");
+    expect(errorStatus(emptyUpstreamFailure(diagnostics.streamEvidence, 600, 150))).toBe(504);
   });
 });
 

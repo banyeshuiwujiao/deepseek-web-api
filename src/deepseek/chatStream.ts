@@ -157,6 +157,9 @@ export async function streamPlainChat(
     recoverableEmpty: false,
     promotedReasoning: !responseText.trim() && Boolean(reasoningText.trim()),
     protocolShape: protocolShape(responseText),
+    // attributionFields() only flattens the verdict into the log; the failure classifier needs the
+    // evidence object itself, which is why this path used to attribute nothing to anybody.
+    ...(emptyEvidence ? { streamEvidence: emptyEvidence } : {}),
     ...attributionFields(emptyEvidence),
   };
   emit(finalChunk(run, created, "stop", tokens, diagnostics));
@@ -246,6 +249,9 @@ export function toolDiagnostics(
     promotedReasoning: outcome.promotedReasoning,
     protocolShape: protocolShape(outcome.outputText),
     protocolTruncated: outcome.protocolTruncated,
+    // toolRecovery hands diagnostics.streamEvidence to emptyUpstreamFailure(); attributionFields only
+    // flattens the same facts for the log, so without this line the attributed failure never fired.
+    ...(result?.emptyEvidence ? { streamEvidence: result.emptyEvidence } : {}),
     ...attributionFields(result?.emptyEvidence),
   };
 }
