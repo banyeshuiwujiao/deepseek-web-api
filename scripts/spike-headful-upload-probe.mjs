@@ -24,7 +24,10 @@ const STAGE = process.argv[2] === "upload" ? "upload" : "inspect";
 const PORT = 9334;
 const BASE = "https://chat.deepseek.com";
 const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/(\w:)/, "$1");
-const AUTH_FILE = join(ROOT, "data", "auth.json");
+// Prefer the QR-logged-in spike session (a real browser session from the human scan); fall back to the
+// proxy's data/auth.json only when no spike session exists. Nothing here writes to either file.
+const SPIKE_SESSION = join(ROOT, "data", "auth-browser-spike.json");
+const AUTH_FILE = existsSync(SPIKE_SESSION) ? SPIKE_SESSION : join(ROOT, "data", "auth.json");
 const PROFILE_DIR = join(ROOT, "data", "spike-profile");
 const PNG_PATH = join(ROOT, "data", "spike-probe.png");
 const SECONDS = Number(process.env.SPIKE_SECONDS || 25);
@@ -106,6 +109,16 @@ function launchVisibleChrome() {
   return child;
 }
 
+/** Reuse a CDP that is already listening; spawning would add a focused tab we do not poll. */
+async function cdpAlreadyUp() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${PORT}/json/version`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function waitForCdp(timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -122,16 +135,20 @@ async function waitForCdp(timeoutMs = 45_000) {
 
 const auth = JSON.parse(readFileSync(AUTH_FILE, "utf8"));
 const cookieCount = Array.isArray(auth.cookies) ? auth.cookies.length : 0;
-console.log(`# auth.json loaded: token=${auth.token ? "present" : "MISSING"} cookies=${cookieCount} cookieHeader=${auth.cookie ? "present" : "missing"}`);
+console.log(`# session loaded: source=${AUTH_FILE === SPIKE_SESSION ? "spike (QR login)" : "data/auth.json"} token=${auth.token ? "present" : "MISSING"} cookies=${cookieCount} cookieHeader=${auth.cookie ? "present" : "missing"}`);
 
 if (!existsSync(join(ROOT, "data"))) mkdirSync(join(ROOT, "data"), { recursive: true });
 if (STAGE === "upload") console.log(`# probe png bytes=${writeProbePng(PNG_PATH)} at ${PNG_PATH}`);
 
-launchVisibleChrome();
+if (!(await cdpAlreadyUp())) launchVisibleChrome();
 await waitForCdp();
 
 const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`, { timeout: 15_000 });
 const context = browser.contexts()[0];
+// Newest page, brought to the front: that is the tab the human is looking at.
+const pageList = context.pages();
+const page = pageList[pageList.length - 1] ?? (await context.newPage());
+await page.bringToFront().catch(() => {});
 
 if (cookieCount) {
   await context.addCookies(auth.cookies.map((c) => ({
@@ -140,7 +157,6 @@ if (cookieCount) {
   })));
 }
 
-const page = context.pages()[0] ?? (await context.newPage());
 const observed = [];
 const seenKeys = new Set();
 page.on("request", (request) => {
@@ -172,16 +188,31 @@ page.on("response", (response) => {
   response.text().then((body) => {
     if (!/file|is_upload|\bid\b|url/i.test(body)) return;
     console.log(JSON.stringify({ at: "response", status: response.status(), path: new URL(url).pathname, shape: redact(body) }));
+    // Persist the uploaded file id for the completion stage, without ever printing it.
+    if (new URL(url).pathname === "/api/v0/file/upload_file") {
+      try {
+        const json = JSON.parse(body);
+        const uploaded = json?.data?.biz_data;
+        if (uploaded?.id) {
+          writeFileSync(join(ROOT, "data", "spike-file-id.json"), JSON.stringify({ id: uploaded.id, capturedAt: new Date().toISOString() }, null, 1));
+        }
+      } catch { /* not the upload body */ }
+    }
   }).catch(() => { /* body unavailable */ });
 });
 
 if (!page.url().startsWith(BASE)) {
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60_000 });
 }
-await page.evaluate((token) => {
-  localStorage.setItem("userToken", JSON.stringify({ value: token }));
-}, auth.token);
-await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
+// The QR-logged-in browser already holds a valid session, so no token hydration is needed (and hydrating
+// would overwrite the scan's token). Only hydrate when we fell back to the proxy's data/auth.json.
+const usedSpikeSession = AUTH_FILE === SPIKE_SESSION;
+if (!usedSpikeSession) {
+  await page.evaluate((token) => {
+    localStorage.setItem("userToken", JSON.stringify({ value: token }));
+  }, auth.token);
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
+}
 await page.waitForTimeout(8_000);
 
 const state = await page.evaluate(() => {

@@ -36,16 +36,30 @@ function chromeExecutable() {
 mkdirSync(PROFILE_DIR, { recursive: true });
 // Deliberately no --enable-automation / --headless: this window is for a human to look at, and DeepSeek's
 // environment check flags obviously-automated clients (it already popped "使用环境异常" elsewhere).
-const child = spawn(chromeExecutable(), [
-  `--remote-debugging-port=${PORT}`,
-  "--remote-debugging-address=127.0.0.1",
-  `--user-data-dir=${PROFILE_DIR}`,
-  "--no-first-run",
-  "--no-default-browser-check",
-  "--disable-extensions",
-  `${BASE}/sign_in`,
-], { detached: true, stdio: "ignore" });
-child.unref();
+// Reuse a CDP that is already listening instead of spawning: every spawn adds a *new tab* and Chrome
+// focuses it, so the QR on screen can belong to a tab this script never polls. That is exactly how the
+// first 300s wait failed -- 5 stacked /sign_in tabs, none of them the one being polled.
+async function cdpAlreadyUp() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${PORT}/json/version`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+if (!(await cdpAlreadyUp())) {
+  const child = spawn(chromeExecutable(), [
+    `--remote-debugging-port=${PORT}`,
+    "--remote-debugging-address=127.0.0.1",
+    `--user-data-dir=${PROFILE_DIR}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-extensions",
+    `${BASE}/sign_in`,
+  ], { detached: true, stdio: "ignore" });
+  child.unref();
+}
 
 const deadline = Date.now() + 45_000;
 while (true) {
@@ -59,7 +73,11 @@ while (true) {
 
 const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`, { timeout: 15_000 });
 const context = browser.contexts()[0];
-const page = context.pages()[0] ?? (await context.newPage());
+// Target the *newest* page and bring it to the front: with several /sign_in tabs stacked, the human sees
+// (and scans) the front one, so that is the one we must poll. Fall back to the first page if there is none.
+const pages = context.pages();
+const page = pages[pages.length - 1] ?? (await context.newPage());
+await page.bringToFront().catch(() => {});
 if (!page.url().includes("chat.deepseek.com")) await page.goto(`${BASE}/sign_in`, { waitUntil: "domcontentloaded", timeout: 60_000 });
 await page.waitForTimeout(6_000);
 
@@ -128,8 +146,12 @@ await page.screenshot({ path: shot }).catch(() => {});
 console.log("# page screenshot:", shot);
 
 console.log(`# waiting up to ${WAIT_SECONDS}s for the scan to complete (poll every 3s)...`);
+// A WeChat QR lives about two minutes; refresh it while we wait so the user is never handed a dead code.
+// NOTE: "userToken present" is NOT proof of a fresh login -- a previous run may have hydrated this same
+// profile (observed: a stray token left the poll printing "t" forever while the URL stayed /sign_in).
 const stopAt = Date.now() + WAIT_SECONDS * 1000;
 let loggedIn = false;
+let qrRefreshedAt = Date.now();
 while (Date.now() < stopAt) {
   await page.waitForTimeout(3_000);
   const url = page.url();
@@ -138,8 +160,15 @@ while (Date.now() < stopAt) {
     console.log("# signed in, page now:", url);
     break;
   }
-  const tokenPresent = await page.evaluate(() => Boolean(localStorage.getItem("userToken")));
-  process.stdout.write(tokenPresent ? "t" : ".");
+  if (Date.now() - qrRefreshedAt > 90_000) {
+    qrRefreshedAt = Date.now();
+    const fresh = await probe().catch(() => null);
+    if (fresh && (fresh.kind === "canvas" || fresh.kind === "data-url")) {
+      const base64 = fresh.data.replace(/^data:image\/png;base64,/, "");
+      writeFileSync(QR_PATH, Buffer.from(base64, "base64"));
+      console.log("\n# QR refreshed (previous one was about to expire):", QR_PATH);
+    }
+  }
 }
 console.log();
 
