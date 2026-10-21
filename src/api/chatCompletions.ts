@@ -63,7 +63,12 @@ export async function handleChatCompletions(
       response.write("data: [DONE]\n\n");
       response.end();
     } catch (error) {
-      response.write(`data: ${JSON.stringify({ error: { message: errorMessage(error) } })}\n\n`);
+      // The status has to ride inside the frame: headers are already flushed at this point, and the
+      // plugin falls back to TRANSPORT (retryable, and meaningless here) without a number to map.
+      const status = errorStatus(error);
+      response.write(`data: ${JSON.stringify({ error: { message: errorMessage(error), status } })}
+
+`);
       response.end();
     }
     return;

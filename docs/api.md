@@ -175,6 +175,22 @@ Tool-turn answer text is buffered by default: `delta.content` for a turn that ca
 
 The final chunk also carries a non-standard `diagnostics` object describing what the authoritative parser concluded: `protocolShape` (`dsml` / `json` / `none`), `protocolTruncated`, `reasoningChars`, `outputChars`, `toolCallCount`, and the empty/retry flags. It exists so a local client can log one line per turn and answer "why did this turn not call anything" without decompressing a session log.
 
+When both channels came back empty, `diagnostics` additionally carries `emptyVerdict` plus `streamEvidence`
+(`events`, `sawReady`, `sawClose`, `droppedContentFrames`). The verdict is decided from what the upstream
+actually sent, never from prompt size:
+
+| verdict | meaning | who to blame |
+|---|---|---|
+| `upstream-not-started` | no `ready` frame ever arrived | the upstream never accepted the turn |
+| `upstream-silent` | a reply was opened, then produced no reasoning and no answer text | upstream availability |
+| `parser-dropped-content` | frames held answer-shaped text that yielded no delta | our normalizer; fix the parser |
+
+Attribution matters because a turn is only retried once: with a verdict the server raises a real failure
+(`504` for a silent reply, `502` for one that never started) instead of writing an apology into the
+assistant text, which previously made the turn look completed to the client. The message deliberately says
+"unrelated to prompt size": clients map context-overflow phrasing to the **non-retryable**
+`CONTEXT_WINDOW_EXCEEDED`, so even denying that diagnosis in words would mis-file the turn.
+
 With `stream_options: { "include_usage": true }` the final chunk also carries `usage`, whose `completion_tokens` and `total_tokens` are the upstream accumulated output counter and whose `prompt_tokens` stays `0` because the web endpoint never reports input tokens. Without that opt-in no streaming chunk carries `usage`, so configure clients such as Pi with `supportsUsageInStreaming: false` when they cannot request it.
 
 ## Tool-call mapping
@@ -240,6 +256,11 @@ Responses streaming errors use a top-level event payload:
 ```
 
 Upstream HTTP failures are surfaced as `502`. Invalid JSON/input is `400`, oversized bodies are `413`, and invalid API keys are `401`.
+
+Chat Completions streaming errors arrive as an in-band frame after the headers are already flushed, so the
+status travels inside the payload as well: `data: {"error":{"message":"...","status":504}}`. Clients that
+only read the message would otherwise default to a transport failure and retry something that will never
+succeed.
 
 ## Not supported
 

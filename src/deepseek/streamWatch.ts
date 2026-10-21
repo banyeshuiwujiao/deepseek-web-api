@@ -7,6 +7,7 @@
  * counters below separate "the upstream never started answering" from "the upstream sent content our
  * parser failed to recognize", which are opposite failures and need opposite fixes.
  */
+import { HttpError } from "../utils/errors.js";
 import type { DeepSeekSseEvent } from "./types.js";
 
 /** Raw stream facts collected while the SSE body is consumed. Nothing here guesses at intent. */
@@ -150,4 +151,33 @@ export function attributionFields(evidence: EmptyStreamEvidence | null | undefin
     streamEvents: evidence.events,
     droppedContentFrames: evidence.droppedContentFrames,
   };
+}
+
+/**
+ * Turn an attributed empty turn into a real failure instead of prose.
+ *
+ * `EMPTY_TOOL_RESPONSE_TEXT` used to be delivered as ordinary assistant content, so DSH saw a completed
+ * turn whose text happened to be an apology, and the plugin's own `EMPTY_RESPONSE` path could never fire.
+ * Only two of the three verdicts are safe to describe as an upstream failure: when the parser dropped
+ * content the upstream did answer, and pretending otherwise would send the user to retry a turn that is
+ * really our bug.
+ */
+export function emptyUpstreamFailure(
+  evidence: EmptyStreamEvidence | null | undefined,
+  promptChars: number,
+): Error | null {
+  if (!evidence) return null;
+  if (evidence.verdict === "parser-dropped-content") return null;
+  const status = evidence.sawReady ? 504 : 502;
+  const reason = evidence.sawReady
+    ? "the upstream opened a reply but produced no reasoning and no answer text"
+    : "the upstream never opened a reply for this turn";
+  const message =
+    `DeepSeek Web returned an empty turn (${evidence.verdict}; ${reason}). ` +
+    `events=${evidence.events}, closed=${evidence.sawClose}, promptChars=${promptChars}. ` +
+        // Wording constraint: the client maps any phrase matching its context-overflow detector to the
+    // NON-retryable CONTEXT_WINDOW_EXCEEDED, so this sentence must never spell that phrase out -- not even
+    // to deny it. "unrelated to prompt size" carries the same meaning without tripping the detector.
+    "This is an upstream availability failure, unrelated to prompt size.";
+  return new HttpError(status, message);
 }

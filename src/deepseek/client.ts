@@ -25,6 +25,7 @@ import type { MessageId, SessionStore } from "./sessionStore.js";
 import { canonicalAssistantText } from "./toolCalls.js";
 import { EMPTY_TOOL_RESPONSE_TEXT } from "./toolOutcome.js";
 import { attributionFields } from "./streamWatch.js";
+import { withToolRecovery } from "./toolRecovery.js";
 import type { MessageTurn, ModelType, RequestBody } from "./types.js";
 
 interface PreparedRun extends ChatRun {
@@ -42,8 +43,6 @@ interface PreparedRun extends ChatRun {
   hasTools: boolean;
   retry: number;
 }
-interface CompletionAttempt<T> { value: T; diagnostics: CompletionDiagnostics }
-interface CompletionResult<T> extends CompletionAttempt<T> { run: PreparedRun; retry: number }
 interface BufferedResponse {
   result: MappedResponseResult;
   events: Array<{ event: string; data: Record<string, unknown> }>;
@@ -75,7 +74,7 @@ export class DeepSeekClient {
       return result;
     }
 
-    const completed = await this.withToolRecovery(body, initialRun, async (run, _retry, final) => {
+    const completed = await withToolRecovery(initialRun, async (run, _retry, final) => {
       const events: BufferedResponse["events"] = [];
       const result = await consumeResponses({
         ...this.responseInput(run),
@@ -83,6 +82,11 @@ export class DeepSeekClient {
         emit: (event, data) => events.push({ event, data }),
       });
       return { value: { result, events }, diagnostics: result.diagnostics };
+    }, {
+      logger: this.logger,
+      logFields: (run, diagnostics) => this.logFields(run, diagnostics),
+      logAttempt: (run, diagnostics) => this.logAttempt(run, diagnostics),
+      prepareRetry: () => this.prepare(body, initialRun),
     });
     for (const event of completed.value.events) emit?.(event.event, event.data);
     if (!completed.diagnostics.recoverableEmpty) {
@@ -108,7 +112,7 @@ export class DeepSeekClient {
     // Live prose only goes out on the first attempt: a retry replaces the whole verdict and streamed
     // text cannot be retracted, so `seen` tracks everything the client already has to avoid repeating it.
     const seen = { content: "" };
-    const completed = await this.withToolRecovery(body, initialRun, async (run, retry, final) => {
+    const completed = await withToolRecovery(initialRun, async (run, retry, final) => {
       const value = await consumeToolChat(run, final ? EMPTY_TOOL_RESPONSE_TEXT : "", {
         streamReasoning: this.config.toolReasoning === "clean",
         streamContent: this.config.streamContent === "live" && retry === 0,
@@ -116,39 +120,16 @@ export class DeepSeekClient {
       });
       seen.content += value.streamedContent;
       return { value, diagnostics: toolDiagnostics(value.outcome, value) };
+    }, {
+      logger: this.logger,
+      logFields: (run, diagnostics) => this.logFields(run, diagnostics),
+      logAttempt: (run, diagnostics) => this.logAttempt(run, diagnostics),
+      prepareRetry: () => this.prepare(body, initialRun),
     });
     const sessionText = emitToolChat(completed.run, { ...completed.value, streamedContent: seen.content }, this.config.toolReasoning, emit);
     if (!completed.diagnostics.recoverableEmpty) {
       this.remember(completed.run, completed.value.responseMessageId, sessionText);
     }
-  }
-
-  private async withToolRecovery<T>(
-    body: RequestBody,
-    initialRun: PreparedRun,
-    execute: (
-      run: PreparedRun,
-      retry: number,
-      finalAttempt: boolean,
-    ) => Promise<CompletionAttempt<T>>,
-  ): Promise<CompletionResult<T>> {
-    const first = await execute(initialRun, 0, false);
-    this.logAttempt(initialRun, first.diagnostics);
-    if (!first.diagnostics.recoverableEmpty) return { ...first, run: initialRun, retry: 0 };
-
-    this.logger.info("Retrying unusable DeepSeek tool response", this.logFields(initialRun, first.diagnostics));
-    const retryRun = await this.prepare(body, initialRun);
-    const second = await execute(retryRun, 1, true);
-    this.logAttempt(retryRun, second.diagnostics);
-    if (second.diagnostics.recoverableEmpty) {
-      this.logger.warn("DeepSeek tool response remained unusable after retry", {
-        ...this.logFields(retryRun, second.diagnostics),
-        fallbackVisible: true,
-      });
-    } else {
-      this.logger.info("DeepSeek tool response recovered", this.logFields(retryRun, second.diagnostics));
-    }
-    return { ...second, run: retryRun, retry: 1 };
   }
 
   /** Resolve trusted request options and preserve the last good parent across an empty retry. */

@@ -4,8 +4,20 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- An attributed empty tool turn now fails as a real error (`504` silent reply, `502` never started) instead
+  of delivering `EMPTY_TOOL_RESPONSE_TEXT` as ordinary assistant prose. DSH reported those turns as
+  completed, and the plugin's own `EMPTY_RESPONSE` path could never fire. Turns whose verdict blames our
+  parser keep the old fallback, because describing them as upstream unavailability would send the user to
+  retry a bug of ours.
+- Chat Completions streaming error frames carry `error.status`. Headers are already flushed at that point,
+  and the plugin maps a message without a status to the retryable `TRANSPORT` code.
+
 ### Added
 
+- `withToolRecovery` moved to its own module so the three distinct retry outcomes (recovered / attributed
+  failure / still-unusable) each have one place that decides how they are logged.
 - `DS_STREAM_CONTENT=live` releases tool-turn answer prose through the protocol gate as it arrives instead of waiting for the parse (default stays `buffered`). The gate only holds text back and never retracts it, the post-parse chunk sends only the tail the client has not seen, and a retried attempt appends nothing because its verdict replaces the first one.
 - `GET /health` reports the effective `streamContent` mode, and `live-tool-content` joins `capabilities` as the feature floor for the behavior above.
 - `POST /v1/chat/completions` streaming carries a non-standard `diagnostics` object on the final chunk (`protocolShape`, `protocolTruncated`, character counts, call count, retry flags), so local clients can log the parse verdict per turn instead of asking maintainers to decompress session logs.
