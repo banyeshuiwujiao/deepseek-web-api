@@ -1,3 +1,13 @@
+/**
+ * Body ceiling for the completion routes.
+ *
+ * Attachments arrive inline as base64 data URLs, which inflate a payload by a third, so the old 1 MiB
+ * JSON cap rejected a 700 KB image outright. 16 MiB of JSON is about 12 MiB of attachment bytes, which
+ * matches MAX_ATTACHMENT_BYTES: a request that passes this cap cannot also smuggle an oversized file
+ * past the per-attachment check.
+ */
+const COMPLETION_BODY_MAX_BYTES = 16 * 1024 * 1024;
+
 /** Routes the small OpenAI-compatible HTTP surface without a framework dependency. */
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -37,12 +47,12 @@ export async function routeRequest(
     return;
   }
   if (request.method === "POST" && path === "/v1/responses") {
-    const body: RequestBody = await readJsonBody(request);
+    const body: RequestBody = await readJsonBody(request, COMPLETION_BODY_MAX_BYTES);
     await handleResponses(response, body, dependencies.client);
     return;
   }
   if (request.method === "POST" && path === "/v1/chat/completions") {
-    const body: RequestBody = await readJsonBody(request);
+    const body: RequestBody = await readJsonBody(request, COMPLETION_BODY_MAX_BYTES);
     await handleChatCompletions(response, body, dependencies.client);
     return;
   }

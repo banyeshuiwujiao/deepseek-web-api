@@ -59,7 +59,11 @@ function parseSessionEntry(value: unknown): SessionEntry | null {
   const turns: MessageTurn[] = [];
   for (const turn of value.turns) {
     if (!isRecord(turn) || typeof turn.role !== "string" || typeof turn.content !== "string") return null;
-    turns.push({ role: turn.role, content: turn.content });
+    // Older sessions.json files have no attachmentCount; reading it as 0 keeps them matching.
+    const attachmentCount = typeof turn.attachmentCount === "number" && turn.attachmentCount > 0
+      ? turn.attachmentCount
+      : undefined;
+    turns.push(attachmentCount === undefined ? { role: turn.role, content: turn.content } : { role: turn.role, content: turn.content, attachmentCount });
   }
   const lastResponseMessageId = parentId(value.lastResponseMessageId);
   const lastModelType = parseModelType(value.lastModelType);
@@ -148,7 +152,15 @@ export class SessionStore {
     const requests = input.requestTurns?.length
       ? input.requestTurns
       : [{ role: "user", content: input.prompt }];
-    turns.push(...requests.map((turn) => ({ role: turn.role, content: normalizeText(turn.content) })));
+    // Preserve the attachment count when rebuilding each turn: dropping it here would erase the
+    // dimension the fingerprint relies on, and the stored session would stop distinguishing a turn
+    // that carried a file from the same turn without one.
+    turns.push(...requests.map((turn) => {
+      const content = normalizeText(turn.content);
+      return turn.attachmentCount && turn.attachmentCount > 0
+        ? { role: turn.role, content, attachmentCount: turn.attachmentCount }
+        : { role: turn.role, content };
+    }));
     turns.push({ role: "assistant", content: assistantText });
     const instructionFingerprint = input.instructionFingerprint ?? previous?.instructionFingerprint;
     const toolsFingerprint = input.toolsFingerprint ?? previous?.toolsFingerprint;
@@ -203,6 +215,10 @@ export class SessionStore {
     if (exact && this.sessions.has(exact)) return this.found(exact, key);
 
     let best: { sessionId: string; score: number } | undefined;
+    // Attachment shape of the incoming history. The conservative fallback below compares only the
+    // last assistant turn, so without this guard a no-image request would reuse a session that had an
+    // image attached and the model would answer from text alone.
+    const incomingFiles = turns.reduce((total, turn) => total + (turn.attachmentCount ?? 0), 0);
     for (const [sessionId, entry] of this.sessions) {
       const stored = entry.turns.map((turn) => ({ ...turn, content: normalizeText(turn.content) }));
       let score = 0;
@@ -215,6 +231,8 @@ export class SessionStore {
       ) {
         score = Math.min(stored.length, turns.length);
       } else {
+        const storedFiles = stored.reduce((total, turn) => total + (turn.attachmentCount ?? 0), 0);
+        if (storedFiles !== incomingFiles) continue;
         const lastIncoming = [...turns].reverse().find((turn) => turn.role === "assistant");
         const lastStored = [...stored].reverse().find((turn) => turn.role === "assistant");
         if (
