@@ -2,12 +2,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HttpError } from "../../src/utils/errors.js";
+import type { DeepSeekAuth } from "../../src/deepseek/types.js";
 import {
   ALLOWED_EXTENSIONS,
   MAX_ATTACHMENT_BYTES,
   collectAttachmentParts,
   resolveAttachments,
+  uploadAttachments,
 } from "../../src/deepseek/attachments.js";
+
+const AUTH: DeepSeekAuth = {
+  token: "token-value",
+  cookie: "smidV2=cookie-value",
+  cookies: [],
+  dumped_at: "2026-10-21T00:00:00.000Z",
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 /** A 1x1 transparent PNG, the smallest valid image payload there is. */
 const TINY_PNG_BASE64 =
@@ -229,5 +245,87 @@ describe("allow-list", () => {
     for (const extension of ["exe", "zip", "tar", "gz", "sh2"]) {
       expect(ALLOWED_EXTENSIONS).not.toContain(extension);
     }
+  });
+});
+
+describe("uploadAttachments readiness", () => {
+  /** The three-layer envelope the upload endpoint answers with. */
+  function uploadEnvelope(id: string, status: string): unknown {
+    return {
+      code: 0,
+      msg: "",
+      data: { biz_code: 0, biz_msg: "", biz_data: { id, file_name: "a.png", file_size: 3, status, is_image: true } },
+    };
+  }
+
+  function fetchEnvelope(status: string): unknown {
+    return {
+      code: 0,
+      msg: "",
+      data: {
+        biz_code: 0,
+        biz_msg: "",
+        biz_data: { files: [{ id: "file-1", file_name: "a.png", file_size: 3, status, is_image: true, token_usage: 184 }] },
+      },
+    };
+  }
+
+  const oneAttachment = [{ bytes: new Uint8Array([1, 2, 3]), fileName: "a.png", contentType: "image/png", origin: "data-url" as const }];
+
+  it("waits for the file to be parsed before returning its id", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      seen.push(String(url));
+      if (String(url).includes("/api/v0/file/fetch_files")) return jsonResponse(fetchEnvelope("SUCCESS"));
+      return jsonResponse(uploadEnvelope("file-1", "PENDING"));
+    });
+
+    const ids = await uploadAttachments({
+      baseUrl: "https://chat.deepseek.com",
+      auth: AUTH,
+      token: "user-token",
+      powHeaderFor: async () => "pow-header",
+      attachments: oneAttachment,
+    });
+
+    expect(ids).toEqual(["file-1"]);
+    // A completion referencing a file still PARSING comes back with no content at all, so the poll
+    // must happen before the id is handed to the caller.
+    expect(seen.some((url) => url.includes("/api/v0/file/fetch_files"))).toBe(true);
+  });
+
+  it("skips the poll when the caller opts out", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      seen.push(String(url));
+      return jsonResponse(uploadEnvelope("file-1", "PENDING"));
+    });
+
+    const ids = await uploadAttachments({
+      baseUrl: "https://chat.deepseek.com",
+      auth: AUTH,
+      token: "user-token",
+      powHeaderFor: async () => "pow-header",
+      attachments: oneAttachment,
+      waitForReady: false,
+    });
+
+    expect(ids).toEqual(["file-1"]);
+    expect(seen.some((url) => url.includes("fetch_files"))).toBe(false);
+  });
+
+  it("propagates a failed parse instead of handing back a dead id", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("/api/v0/file/fetch_files")) return jsonResponse(fetchEnvelope("FAILED"));
+      return jsonResponse(uploadEnvelope("file-1", "PENDING"));
+    });
+
+    await expect(uploadAttachments({
+      baseUrl: "https://chat.deepseek.com",
+      auth: AUTH,
+      token: "user-token",
+      powHeaderFor: async () => "pow-header",
+      attachments: oneAttachment,
+    })).rejects.toThrow();
   });
 });

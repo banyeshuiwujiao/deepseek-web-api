@@ -25,7 +25,7 @@ import {
   extensionForMime,
   extensionOf,
 } from "./attachmentTypes.js";
-import { uploadFile } from "./fileUpload.js";
+import { uploadFile, waitForFileReady } from "./fileUpload.js";
 import type { DeepSeekAuth } from "./types.js";
 
 export { ALLOWED_EXTENSIONS };
@@ -244,6 +244,8 @@ export interface UploadAttachmentsInput {
   token: string;
   powHeaderFor: () => Promise<string>;
   attachments: readonly Attachment[];
+  /** Poll each uploaded file until it is parsed. Default on: completion ignores files still PARSING. */
+  waitForReady?: boolean;
 }
 
 /**
@@ -265,6 +267,17 @@ export async function uploadAttachments(input: UploadAttachmentsInput): Promise<
       fileName: attachment.fileName,
       contentType: attachment.contentType,
     });
+    // A completion that references a file still PARSING comes back with no content at all, so wait for
+    // the terminal state before handing the id on. The spike measured SUCCESS about two seconds after
+    // upload; the poll has its own timeout and reports FAILED rather than hanging.
+    if (input.waitForReady !== false) {
+      const ready = await waitForFileReady(input.baseUrl, input.auth, input.token, uploaded.id);
+      // Handing back a FAILED id would produce the same empty completion as skipping the poll, but
+      // with no error to explain it, so refuse it here where the file name is still in scope.
+      if (ready.status !== "SUCCESS") {
+        throw new HttpError(502, `deepseek did not parse ${attachment.fileName} (status ${ready.status})`);
+      }
+    }
     ids.push(uploaded.id);
   }
   return ids;
