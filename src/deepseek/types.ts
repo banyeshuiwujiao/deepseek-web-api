@@ -11,6 +11,15 @@ export interface ModelResolution {
 export interface MessageTurn {
   role: string;
   content: string;
+  /**
+   * How many attachments this turn carried, when it carried any.
+   *
+   * Session matching must not treat "same words, with an image" and "same words, no image" as the same
+   * turn: reusing that session would silently drop the image and the model would answer from text
+   * alone. A count is used rather than file ids because ids differ between uploads of the same image,
+   * and counting keeps a genuine re-send of the same picture matching.
+   */
+  attachmentCount?: number;
 }
 
 export interface RequestBody extends Record<string, unknown> {

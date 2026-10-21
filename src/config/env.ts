@@ -32,6 +32,12 @@ export interface AppConfig {
   streamContent: StreamContentMode;
   /** Show Chrome UI. Default false (headless). Login always opens a visible window when needed. */
   showBrowser: boolean;
+  /**
+   * Upload attachments found in the request body. Default on; set DS_FILE_UPLOAD=off to disable the
+   * whole path and go back to ignoring image_url / input_file parts. Optional so callers that build a
+   * config by hand (tests, embeddings) keep the enabled default without naming it.
+   */
+  fileUploads?: boolean;
 }
 
 /** Load KEY=VALUE lines from .env without overriding existing process.env. */
@@ -115,5 +121,6 @@ export function loadConfig(cwd = process.cwd()): AppConfig {
     toolCalls: parseToolCalls(process.env.DS_TOOLS),
     streamContent: parseStreamContent(process.env.DS_STREAM_CONTENT),
     showBrowser: /^(1|true|yes|on)$/i.test(process.env.DS_SHOW_BROWSER || ""),
+    fileUploads: !/^(0|false|no|off)$/i.test(process.env.DS_FILE_UPLOAD || ""),
   };
 }

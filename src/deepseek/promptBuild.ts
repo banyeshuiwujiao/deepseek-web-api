@@ -1,6 +1,7 @@
 /** Builds one DeepSeek Web prompt from OpenAI-compatible request shapes. */
 import { createHash } from "node:crypto";
 
+import { countItemAttachments } from "./attachments.js";
 import type { ToolCallMode } from "../config/env.js";
 import { isRecord } from "../utils/json.js";
 import { messageText } from "../utils/text.js";
@@ -102,7 +103,11 @@ function conversationTurn(item: unknown): MessageTurn | null {
   const text = valueText(item);
   const calls = structuredCalls(item);
   const content = [text, ...calls].filter(Boolean).join("\n");
-  return content ? { role, content } : null;
+  if (!content) return null;
+  // Record how many files this turn carried so session matching never confuses "same words with an
+  // image" for "same words without one".
+  const attachmentCount = countItemAttachments(item);
+  return attachmentCount > 0 ? { role, content, attachmentCount } : { role, content };
 }
 
 export function requestConversationTurns(body: RequestBody): MessageTurn[] {

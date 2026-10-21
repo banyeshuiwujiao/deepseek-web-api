@@ -12,6 +12,7 @@ import {
   type ChatStreamChunk,
 } from "./chatStream.js";
 import { openCompletionStream } from "./completion.js";
+import { uploadRequestAttachments } from "./attachmentRunner.js";
 import {
   consumeResponses,
   type CompletionDiagnostics,
@@ -139,11 +140,11 @@ export class DeepSeekClient {
     const thinking = resolveThinking(body);
     const search = resolveSearch(body, modelType);
     // Attachments must not change across a retry: the retry reuses the same upstream files.
-    const fileIds = retryFrom ? retryFrom.fileIds : resolveFileIds(body);
+    const explicitFileIds = retryFrom ? [] : resolveFileIds(body);
     const conversation = retryFrom ? null : this.sessions.resolve(body);
     const reusedSession = retryFrom
       ? false
-      : Boolean(conversation?.sessionId && this.sessions.has(conversation.sessionId));
+      : Boolean(conversation?.sessionId && this.sessions.has(conversation?.sessionId));
     const previous = !retryFrom && reusedSession && conversation?.sessionId
       ? this.sessions.get(conversation.sessionId)
       : undefined;
@@ -154,6 +155,11 @@ export class DeepSeekClient {
       ? buildToolRecoveryPrompt(body, retryFrom.requestTurns, retryFrom.latestUserText).trim()
       : built?.prompt.trim() ?? "";
     if (!prompt) throw new HttpError(400, "empty input");
+
+    // Upload first: the completion needs the ids, and each upload needs its own PoW bound to the
+    // upload path. Explicit caller-supplied ids win, so a client that already uploaded can skip this.
+    const uploadedIds = retryFrom ? [] : await uploadRequestAttachments({ config: this.config, login: this.login }, body);
+    const fileIds = retryFrom ? retryFrom.fileIds : [...explicitFileIds, ...uploadedIds];
 
     const auth = await this.login.dumpCurrent();
     const page = await this.login.page();

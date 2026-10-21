@@ -114,6 +114,19 @@ function attachmentUrl(part: Record<string, unknown>): string | null {
   return null;
 }
 
+/**
+ * How many attachment parts one request item carries.
+ *
+ * Used by the prompt/session layer so a turn that had files is distinguishable from the same turn
+ * without them. Counting only -- resolving the bytes is a separate, side-effecting step.
+ */
+export function countItemAttachments(item: unknown): number {
+  if (!isRecord(item)) return 0;
+  if (attachmentUrl(item) !== null) return 1;
+  if (!Array.isArray(item.content)) return 0;
+  return item.content.filter((part) => isRecord(part) && attachmentUrl(part) !== null).length;
+}
+
 /** Walk messages[]/input[] and collect every attachment part in request order. */
 export function collectAttachmentParts(body: Record<string, unknown>): Array<Record<string, unknown>> {
   const items: unknown[] = [];
